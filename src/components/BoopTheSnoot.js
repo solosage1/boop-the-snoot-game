@@ -34,8 +34,9 @@ function BoopTheSnoot({ userRank, userBalance }) {
     setBestLowerRank(bestLower);
   }, [userRank, userBalance]);
 
-  const calculatePercentageIncrease = (newValue, oldValue) => {
-    return ((newValue - oldValue) / oldValue * 100).toFixed(2);
+  const calculatePercentageChange = (newValue, oldValue) => {
+    const change = ((newValue - oldValue) / oldValue * 100).toFixed(2);
+    return newValue > oldValue ? `+${change}` : change;
   };
 
   return (
@@ -46,9 +47,9 @@ function BoopTheSnoot({ userRank, userBalance }) {
           🐽
         </div>
         <p className="boop-instruction">
-          Boop to deposit {bestHigherRank.depositAmount.toFixed(2)} SIP ({calculatePercentageIncrease(bestHigherRank.depositAmount, userBalance)}% more)
+          Boop to deposit {bestHigherRank.depositAmount.toFixed(2)} SIP ({calculatePercentageChange(userBalance + bestHigherRank.depositAmount, userBalance)}% change)
           <br />
-          for {calculatePercentageIncrease(bestHigherRank.earnings, currentPrediction)}% more rewards!
+          for {calculatePercentageChange(bestHigherRank.earnings, currentPrediction)}% more rewards!
         </p>
       </div>
       <div className="current-prediction">
@@ -57,7 +58,7 @@ function BoopTheSnoot({ userRank, userBalance }) {
       </div>
       <div className="secondary-action">
         <p>
-          Or withdraw {bestLowerRank.withdrawAmount.toFixed(2)} SIP for {calculatePercentageIncrease(bestLowerRank.earnings, currentPrediction)}% more rewards
+          Or withdraw {bestLowerRank.withdrawAmount.toFixed(2)} SIP ({calculatePercentageChange(userBalance - bestLowerRank.withdrawAmount, userBalance)}% change) for {calculatePercentageChange(bestLowerRank.earnings, currentPrediction)}% more rewards
         </p>
         <button className="withdraw-button">Withdraw</button>
       </div>

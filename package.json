@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
@@ -23,6 +23,7 @@
     "socket.io-client": "^4.7.5"
   },
   "devDependencies": {
+    "@babel/preset-react": "^7.24.7",
     "gh-pages": "^6.1.1",
     "react-scripts": "^5.0.1"
   },
