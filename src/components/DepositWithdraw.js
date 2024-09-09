@@ -1,28 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { deposit, withdraw } from '../services/tokenSimulation';
 
-function DepositWithdraw({ onUpdate }) {
-  const [amount, setAmount] = useState('');
+function DepositWithdraw({ onUpdate, initialAmount, userBalance }) {
+  const [amount, setAmount] = useState(initialAmount || '');
+  const [action, setAction] = useState('Enter Amount');
 
-  const handleDeposit = () => {
-    const result = deposit(Number(amount));
-    if (result.success) {
-      onUpdate();
-      setAmount('');
+  useEffect(() => {
+    if (initialAmount) {
+      setAmount(initialAmount);
+      setAction(initialAmount > 0 ? 'Deposit' : 'Withdraw');
     } else {
-      console.error(result.error);
-      // Show error message to user
+      setAction('Enter Amount');
+    }
+  }, [initialAmount]);
+
+  const handleAction = () => {
+    if (action === 'Deposit') {
+      const result = deposit(Number(amount));
+      if (result.success) {
+        onUpdate();
+        setAmount('');
+        setAction('Enter Amount');
+      } else {
+        console.error(result.error);
+      }
+    } else if (action === 'Withdraw') {
+      const result = withdraw(Number(Math.abs(amount)));
+      if (result.success) {
+        onUpdate();
+        setAmount('');
+        setAction('Enter Amount');
+      } else {
+        console.error(result.error);
+      }
     }
   };
 
-  const handleWithdraw = () => {
-    const result = withdraw(Number(amount));
-    if (result.success) {
-      onUpdate();
-      setAmount('');
-    } else {
-      console.error(result.error);
-      // Show error message to user
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setAmount(value);
+    if (value === '') {
+      setAction('Enter Amount');
+    } else if (Number(value) > 0) {
+      setAction('Deposit');
+    } else if (Number(value) < 0) {
+      setAction('Withdraw');
     }
   };
 
@@ -31,11 +53,17 @@ function DepositWithdraw({ onUpdate }) {
       <input
         type="number"
         value={amount}
-        onChange={(e) => setAmount(e.target.value)}
+        onChange={handleInputChange}
         placeholder="Enter amount"
+        className="amount-input"
       />
-      <button onClick={handleDeposit}>Deposit</button>
-      <button onClick={handleWithdraw}>Withdraw</button>
+      <button 
+        onClick={handleAction}
+        className={`action-button ${action !== 'Enter Amount' ? 'flash' : ''}`}
+        disabled={action === 'Enter Amount'}
+      >
+        {action}
+      </button>
     </div>
   );
 }

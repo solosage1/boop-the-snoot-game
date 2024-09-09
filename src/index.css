@@ -292,3 +292,40 @@ code {
   .withdraw-button:hover {
     background-color: #ec971f;
   }
+
+  .deposit-withdraw {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .amount-input {
+    width: 120px;
+    padding: 5px;
+    font-size: 16px;
+  }
+
+  .action-button {
+    padding: 5px 10px;
+    font-size: 16px;
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+  }
+
+  .action-button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+  }
+
+  .action-button.flash {
+    animation: flash-animation 0.5s;
+  }
+
+  @keyframes flash-animation {
+    0% { background-color: #ffc107; }
+    100% { background-color: #007bff; }
+  }

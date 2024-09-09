@@ -71,8 +71,7 @@ function Dashboard({ gameState }) {
           <span className="info-value">{unclaimedRewards.toFixed(2)} SIP</span>
         </div>
       </div>
-      <DepositWithdraw onUpdate={updateUserInfo} />
-      <BoopTheSnoot userRank={userRank} userBalance={userBalance} />
+      <BoopTheSnoot userRank={userRank} userBalance={userBalance} onUpdate={updateUserInfo} />
       <Leaderboard gameState={gameState} />
       <Notifications />
       <button onClick={addSimulatedPlayer}>Add Simulated Player</button>
