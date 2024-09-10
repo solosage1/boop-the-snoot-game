@@ -15,6 +15,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "es-abstract": "^1.23.3",
     "ethers": "^6.13.2",
     "express": "^4.19.2",
     "react": "^17.0.2",
@@ -24,6 +25,8 @@
   },
   "devDependencies": {
     "@babel/preset-react": "^7.24.7",
+    "eslint": "^9.10.0",
+    "eslint-plugin-react": "^7.35.2",
     "gh-pages": "^6.1.1",
     "react-scripts": "^5.0.1"
   },

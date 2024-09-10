@@ -337,25 +337,18 @@ class BoopTheSnoot {
         return { rank: lowerRank, withdrawAmount: withdrawAmount };
     }
 
-    predictEarnings(rank, timeInMinutes) {
-        const startBlock = this.currentBlockNumber;
-        const endBlock = startBlock + Math.floor((timeInMinutes * 60) / this.blockCreationSpeed);
+    predictEarnings(rank, numberOfBlocks) {
         let totalEarnings = 0;
-        let winCount = 0;
+        const startBlock = this.currentBlockNumber;
 
-        for (let block = startBlock; block < endBlock; block++) {
-            const shortenedBlockNumber = this.shortenBlockNumber(block);
+        for (let i = 0; i < numberOfBlocks; i++) {
+            const blockNumber = startBlock + i;
+            const shortenedBlockNumber = this.shortenBlockNumber(blockNumber);
+            
             if (this.isWinningRank(rank, shortenedBlockNumber)) {
-                winCount++;
+                totalEarnings += this.rewardRate;
             }
         }
-
-        // Calculate total earnings based on win count and current reward rate
-        totalEarnings = winCount * this.rewardRate;
-
-        // Add some randomness to make predictions slightly different each time
-        const randomFactor = 0.9 + Math.random() * 0.2; // Random factor between 0.9 and 1.1
-        totalEarnings *= randomFactor;
 
         return totalEarnings;
     }
@@ -388,6 +381,22 @@ class BoopTheSnoot {
         const playerAtRank = rankings[targetRank - 1];
         return this.playerData[playerAtRank].lpTokens;
     }
+
+    predictRewardsForNextTenMinutes(rank) {
+        const blocksInTenMinutes = Math.floor(600 / this.blockCreationSpeed);
+        let totalRewards = 0;
+        const currentBlock = this.currentBlockNumber;
+
+        for (let i = 0; i < blocksInTenMinutes; i++) {
+            const blockNumber = currentBlock + i;
+            const shortenedBlockNumber = this.shortenBlockNumber(blockNumber);
+            if (this.isWinningRank(rank, shortenedBlockNumber)) {
+                totalRewards += this.rewardRate;
+            }
+        }
+
+        return totalRewards;
+    }
 }
 
-module.exports = BoopTheSnoot;
+export default BoopTheSnoot;

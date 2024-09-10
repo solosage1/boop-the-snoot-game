@@ -85,23 +85,16 @@ class GameState {
 
     getLeaderboard() {
         const rankings = this.boopTheSnoot.getRankings();
-        return rankings.slice(0, 10).map((player, index) => ({
+        return rankings.slice(0, 150).map((player) => ({
             address: player,
-            rank: index + 1,
-            balance: this.boopTheSnoot.getPlayerStats(player).lpTokens
+            balance: this.boopTheSnoot.getPlayerStats(player).lpTokens,
+            totalRewards: this.boopTheSnoot.getPlayerStats(player).totalRewardsReceived
         }));
     }
 
-    calculateNextBestRank(currentRank, currentBalance) {
-        return this.boopTheSnoot.calculateNextBestRank(currentRank, currentBalance);
-    }
-
-    calculateBestLowerRank(currentRank, currentBalance) {
-        return this.boopTheSnoot.calculateBestLowerRank(currentRank, currentBalance);
-    }
-
-    predictEarnings(rank, timeInMinutes) {
-        return this.boopTheSnoot.predictEarnings(rank, timeInMinutes);
+    predictEarnings(rank) {
+        const blocksInTenMinutes = Math.floor(600 / this.boopTheSnoot.blockCreationSpeed);
+        return this.boopTheSnoot.predictEarnings(rank, blocksInTenMinutes);
     }
 
     simulateAllPlayers() {
@@ -142,6 +135,23 @@ class GameState {
             this.boopTheSnoot.deposit(initialDeposit, { from: playerId });
         }
         console.log("Initialized 150 players with random deposits");
+    }
+
+    getTotalPlayers() {
+        return this.boopTheSnoot.players.length;
+    }
+
+    getAverageReward() {
+        const totalRewards = this.players.reduce((sum, player) => {
+            return sum + this.boopTheSnoot.getRewardBalance(player);
+        }, 0);
+        return this.players.length > 0 ? totalRewards / this.players.length : 0;
+    }
+
+    getDepositAmountForRank(rank) {
+        // Implement the logic to calculate the deposit amount for a given rank
+        // This is a placeholder implementation, adjust according to your game rules
+        return rank * 100; // Example: each rank requires 100 more SIP than the previous
     }
 }
 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { gameState } from '../services/gameState';
 import { deposit, withdraw } from '../services/tokenSimulation';
 
-function DepositWithdraw({ onUpdate, initialAmount, userBalance }) {
+function DepositWithdraw({ onUpdate, initialAmount, userBalance, onComplete }) {
   const [amount, setAmount] = useState(initialAmount || '');
   const [action, setAction] = useState('Enter Amount');
 
@@ -16,24 +17,26 @@ function DepositWithdraw({ onUpdate, initialAmount, userBalance }) {
 
   const handleAction = () => {
     if (action === 'Deposit') {
-      const result = deposit(Number(amount));
+      const result = gameState.deposit(Number(amount));
       if (result.success) {
         onUpdate();
-        setAmount('');
-        setAction('Enter Amount');
+        onComplete();
       } else {
         console.error(result.error);
+        // You might want to show an error message to the user here
       }
     } else if (action === 'Withdraw') {
-      const result = withdraw(Number(Math.abs(amount)));
+      const result = gameState.withdraw(Number(Math.abs(amount)));
       if (result.success) {
         onUpdate();
-        setAmount('');
-        setAction('Enter Amount');
+        onComplete();
       } else {
         console.error(result.error);
+        // You might want to show an error message to the user here
       }
     }
+    setAmount('');
+    setAction('Enter Amount');
   };
 
   const handleInputChange = (e) => {
@@ -59,7 +62,7 @@ function DepositWithdraw({ onUpdate, initialAmount, userBalance }) {
       />
       <button 
         onClick={handleAction}
-        className={`action-button ${action !== 'Enter Amount' ? 'flash' : ''}`}
+        className={`action-button ${action !== 'Enter Amount' ? 'primary' : ''}`}
         disabled={action === 'Enter Amount'}
       >
         {action}

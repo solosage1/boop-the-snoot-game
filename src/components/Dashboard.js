@@ -49,14 +49,6 @@ function Dashboard({ gameState }) {
 
   return (
     <div className="dashboard">
-      <h1 className="dashboard-title">
-        🐻 BoopTheSnoot Dashboard 🍯
-      </h1>
-      <GameGuide />
-      <button onClick={() => setShowCompleteGuide(!showCompleteGuide)}>
-        {showCompleteGuide ? 'Hide Complete Guide' : 'Show Complete Guide'}
-      </button>
-      {showCompleteGuide && <CompleteGameGuide />}
       <div className={`user-info ${flashReward ? 'flash' : ''}`}>
         <div className="info-item">
           <span className="info-label">🏆 Rank:</span>
@@ -71,7 +63,14 @@ function Dashboard({ gameState }) {
           <span className="info-value">{unclaimedRewards.toFixed(2)} SIP</span>
         </div>
       </div>
+
       <BoopTheSnoot userRank={userRank} userBalance={userBalance} onUpdate={updateUserInfo} />
+      <GameGuide />
+      <button onClick={() => setShowCompleteGuide(!showCompleteGuide)}>
+        {showCompleteGuide ? 'Hide Complete Guide' : 'Show Complete Guide'}
+      </button>
+      {showCompleteGuide && <CompleteGameGuide />}
+
       <Leaderboard gameState={gameState} />
       <Notifications />
       <button onClick={addSimulatedPlayer}>Add Simulated Player</button>

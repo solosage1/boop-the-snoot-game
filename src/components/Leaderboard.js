@@ -2,42 +2,54 @@ import React, { useState, useEffect } from 'react';
 import { gameState } from '../services/gameState';
 
 function Leaderboard() {
-  const [leaderboardData, setLeaderboardData] = useState([]);
+  const [players, setPlayers] = useState([]);
 
   useEffect(() => {
-    const fetchLeaderboard = () => {
-      if (gameState && gameState.boopTheSnoot) {
-        const data = gameState.boopTheSnoot.getRankings().map(player => {
-          const stats = gameState.boopTheSnoot.getPlayerStatsWithRewards(player);
-          return {
-            address: player,
-            rank: gameState.boopTheSnoot.getRankings().indexOf(player) + 1,
-            balance: stats.lpTokens || 0,
-            totalRewards: stats.totalRewardsReceived || 0
-          };
-        }).sort((a, b) => a.rank - b.rank);
-        setLeaderboardData(data);
-      }
+    const updateLeaderboard = () => {
+      const rankings = gameState.getLeaderboard();
+      const updatedPlayers = rankings.map((player, index) => {
+        const rank = index + 1;
+        const predictedRewards = gameState.predictEarnings(rank);
+        return {
+          ...player,
+          rank,
+          predictedRewards
+        };
+      });
+      setPlayers(updatedPlayers);
     };
 
-    fetchLeaderboard();
-    const interval = setInterval(fetchLeaderboard, 10000);
+    updateLeaderboard();
+    const interval = setInterval(updateLeaderboard, 10000); // Update every 10 seconds
+
     return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="leaderboard">
       <h2>Leaderboard</h2>
-      <ul>
-        {leaderboardData.map((player, index) => (
-          <li key={player.address}>
-            {index + 1}. {player.address.slice(0, 6)}...{player.address.slice(-4)} - 
-            Rank: {player.rank}, 
-            Balance: {player.balance.toFixed(2)} SIP, 
-            Total Rewards: {player.totalRewards.toFixed(2)} SIP
-          </li>
-        ))}
-      </ul>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Address</th>
+            <th>Balance</th>
+            <th>Total Rewards</th>
+            <th>Predicted Rewards (10 min)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {players.map((player) => (
+            <tr key={player.address}>
+              <td>{player.rank}</td>
+              <td>{player.address.slice(0, 6)}...{player.address.slice(-4)}</td>
+              <td>{player.balance.toFixed(2)}</td>
+              <td>{player.totalRewards.toFixed(2)}</td>
+              <td>{player.predictedRewards.toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
