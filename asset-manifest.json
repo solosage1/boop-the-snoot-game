@@ -1,13 +1,14 @@
 {
   "files": {
-    "main.css": "/boop-the-snoot-game/static/css/main.ab6243fe.css",
-    "main.js": "/boop-the-snoot-game/static/js/main.d9702990.js",
+    "main.css": "/boop-the-snoot-game/static/css/main.ed64622e.css",
+    "main.js": "/boop-the-snoot-game/static/js/main.cd1e68ce.js",
+    "static/media/boop-the-snoot.svg": "/boop-the-snoot-game/static/media/boop-the-snoot.4223e92fc15ecb3b8f911942a0d4fc3c.svg",
     "index.html": "/boop-the-snoot-game/index.html",
-    "main.ab6243fe.css.map": "/boop-the-snoot-game/static/css/main.ab6243fe.css.map",
-    "main.d9702990.js.map": "/boop-the-snoot-game/static/js/main.d9702990.js.map"
+    "main.ed64622e.css.map": "/boop-the-snoot-game/static/css/main.ed64622e.css.map",
+    "main.cd1e68ce.js.map": "/boop-the-snoot-game/static/js/main.cd1e68ce.js.map"
   },
   "entrypoints": [
-    "static/css/main.ab6243fe.css",
-    "static/js/main.d9702990.js"
+    "static/css/main.ed64622e.css",
+    "static/js/main.cd1e68ce.js"
   ]
 }
