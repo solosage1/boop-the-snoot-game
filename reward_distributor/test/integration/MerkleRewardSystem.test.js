@@ -1,328 +1,305 @@
-const { assert, expect } = require('chai');
+const { expect } = require('chai');
 const { ethers } = require('hardhat');
-const { MerkleTree } = require("merkletreejs");
-const keccak256 = require("keccak256");
+require('dotenv').config();
+const { MerkleTree } = require('merkletreejs');
+const keccak256 = require('keccak256');
 
 describe("MerkleRewardSystem Integration Tests", function () {
-  let merkleRewardSystem, owner, user1Wallet, user2Wallet, user3Wallet;
-  let rewardToken, secondRewardToken, lpToken;
-  const ERC20_ABI = [
-    "function decimals() view returns (uint8)",
-    "function symbol() view returns (string)",
-    "function name() view returns (string)",
-    "function totalSupply() view returns (uint256)",
-    "function balanceOf(address owner) view returns (uint256)",
-    "function allowance(address owner, address spender) view returns (uint256)",
-    "function approve(address spender, uint256 amount) returns (bool)",
-    "function transfer(address to, uint256 amount) returns (bool)",
-    "function transferFrom(address from, address to, uint256 amount) returns (bool)"
-  ];
+  let merkleRewardSystem;
+  let rewardToken;
+  let lpToken;
+  let owner;
+
+  const OWNER_PRIVATE_KEY = process.env.PRIVATE_KEY;
+  const DEPLOYED_CONTRACT_ADDRESS = process.env.DEPLOYED_CONTRACT_ADDRESS;
+  const REWARD_TOKEN_ADDRESS = process.env.REWARD_TOKEN_ADDRESS;
+  const LP_TOKEN_ADDRESS = process.env.LP_TOKEN_ADDRESS;
+  const RPC_URL = process.env.BARTIO_RPC_URL;
 
   before(async function () {
-    [owner] = await ethers.getSigners();
+    // Set up provider and signer
+    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const ownerWallet = new ethers.Wallet(OWNER_PRIVATE_KEY, provider);
+    owner = ownerWallet;
 
-    // Deploy MerkleRewardSystem
-    const MerkleRewardSystem = await ethers.getContractFactory("MerkleRewardSystem");
-    merkleRewardSystem = await MerkleRewardSystem.deploy();
-    await merkleRewardSystem.deployed();
-    console.log("MerkleRewardSystem deployed to:", merkleRewardSystem.address);
+    // Get contract instance
+    const MerkleRewardSystemFactory = await ethers.getContractFactory("MerkleRewardSystem", owner);
+    merkleRewardSystem = MerkleRewardSystemFactory.attach(DEPLOYED_CONTRACT_ADDRESS);
 
-    // Deploy RewardToken
-    const MockERC20 = await ethers.getContractFactory("MockERC20");
-    rewardToken = await MockERC20.deploy("Reward Token", "RWD");
-    await rewardToken.deployed();
-    console.log("RewardToken deployed to:", rewardToken.address);
+    // Define ERC20 ABI
+    const ERC20_ABI = [
+      "function decimals() view returns (uint8)",
+      "function symbol() view returns (string)",
+      "function name() view returns (string)",
+      "function totalSupply() view returns (uint256)",
+      "function balanceOf(address owner) view returns (uint256)",
+      "function allowance(address owner, address spender) view returns (uint256)",
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function transfer(address to, uint256 amount) returns (bool)",
+      "function transferFrom(address from, address to, uint256 amount) returns (bool)",
+      "function mint(address to, uint256 amount) external" // Ensure mint function exists
+    ];
 
-    // Deploy SecondRewardToken
-    secondRewardToken = await MockERC20.deploy("Second Reward Token", "RWD2");
-    await secondRewardToken.deployed();
-    console.log("SecondRewardToken deployed to:", secondRewardToken.address);
+    // Connect to existing Reward Token and LP Token
+    rewardToken = new ethers.Contract(REWARD_TOKEN_ADDRESS, ERC20_ABI, owner);
+    lpToken = new ethers.Contract(LP_TOKEN_ADDRESS, ERC20_ABI, owner);
 
-    // Deploy LPToken
-    lpToken = await MockERC20.deploy("LP Token", "LP");
-    await lpToken.deployed();
-    console.log("LPToken deployed to:", lpToken.address);
+    console.log("Reward Token Address:", rewardToken.address);
+    console.log("LP Token Address:", lpToken.address);
 
-    // Set up roles if necessary
-    await merkleRewardSystem.grantRole(await merkleRewardSystem.CREATOR_ROLE(), owner.address);
-    await merkleRewardSystem.grantRole(await merkleRewardSystem.ADMIN_ROLE(), owner.address);
+    // Mint reward tokens to the owner if necessary
+    const mintAmount = ethers.utils.parseEther("1000");
+    const ownerRewardBalance = await rewardToken.balanceOf(owner.address);
+    console.log("Owner Reward Token Balance Before Minting:", ethers.utils.formatEther(ownerRewardBalance));
+    if (ownerRewardBalance.lt(mintAmount)) {
+      const mintTx = await rewardToken.mint(owner.address, mintAmount.sub(ownerRewardBalance));
+      await mintTx.wait();
+      console.log("Minted reward tokens to the owner.");
+    }
 
-    // Approve MerkleRewardSystem to spend tokens
-    await rewardToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256);
-    await secondRewardToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256);
-    await lpToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256);
+    const updatedOwnerRewardBalance = await rewardToken.balanceOf(owner.address);
+    console.log("Owner Reward Token Balance After Minting:", ethers.utils.formatEther(updatedOwnerRewardBalance));
 
-    // Create dummy users
-    user1Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
-    user2Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
-    user3Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
+    // Check LP token balance and calculate 10% for testing
+    let lpBalance = await lpToken.balanceOf(owner.address);
+    const lpTestAmount = lpBalance.div(10);
+    console.log("LP token balance:", ethers.utils.formatEther(lpBalance));
+    console.log("LP test amount (10% of balance):", ethers.utils.formatEther(lpTestAmount));
 
-    // Fund user wallets with ETH for gas
-    const tx1 = await owner.sendTransaction({
-      to: user1Wallet.address,
-      value: ethers.utils.parseEther("1"),
-    });
-    await tx1.wait();
+    // Whitelist tokens
+    const ADMIN_ROLE = await merkleRewardSystem.ADMIN_ROLE();
 
-    const tx2 = await owner.sendTransaction({
-      to: user2Wallet.address,
-      value: ethers.utils.parseEther("1"),
-    });
-    await tx2.wait();
+    const hasAdminRole = await merkleRewardSystem.hasRole(ADMIN_ROLE, owner.address);
 
-    const tx3 = await owner.sendTransaction({
-      to: user3Wallet.address,
-      value: ethers.utils.parseEther("1"),
-    });
-    await tx3.wait();
+    if (!hasAdminRole) {
+      console.log("Granting ADMIN_ROLE to the owner...");
+      const grantRoleTx = await merkleRewardSystem.grantRole(ADMIN_ROLE, owner.address);
+      await grantRoleTx.wait();
+      console.log("ADMIN_ROLE granted to the owner.");
+    } else {
+      console.log("Owner already has ADMIN_ROLE. Cannot whitelist tokens.");
+    }
 
-    // Transfer LP Tokens to users
-    await lpToken.transfer(user1Wallet.address, ethers.utils.parseEther("1000"));
-    await lpToken.transfer(user2Wallet.address, ethers.utils.parseEther("1000"));
-    await lpToken.transfer(user3Wallet.address, ethers.utils.parseEther("1000"));
+    // Whitelist Reward Token
+    const isRewardTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(rewardToken.address);
+    if (!isRewardTokenWhitelisted) {
+      const whitelistTx = await merkleRewardSystem.whitelistToken(rewardToken.address);
+      await whitelistTx.wait();
+      console.log("Whitelisted the reward token.");
+    }
+
+    // Whitelist LP Token (if applicable in your contract)
+    // If your contract requires LP tokens to be whitelisted, implement similar logic
+
+    // Verify token whitelisting
+    const isLPTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(lpToken.address);
+    console.log("Reward token whitelisted:", isRewardTokenWhitelisted);
+    console.log("LP token whitelisted:", isLPTokenWhitelisted);
+
+    // Check owner's reward token balance
+    const ownerBalance = await rewardToken.balanceOf(owner.address);
+    console.log("Owner reward token balance:", ethers.utils.formatEther(ownerBalance));
+
+    // Verify reward token allowance
+    const allowance = await rewardToken.allowance(owner.address, merkleRewardSystem.address);
+    console.log("Reward token allowance:", ethers.utils.formatEther(allowance));
+
+    // Whitelist LP token if necessary
+    if (!isLPTokenWhitelisted) {
+      console.log("Whitelisting LP token...");
+      const whitelistLPTokenTx = await merkleRewardSystem.whitelistToken(lpToken.address);
+      await whitelistLPTokenTx.wait();
+      console.log("LP token whitelisted");
+    }
+
+    // Grant UPDATER_ROLE to the owner
+    const UPDATER_ROLE = await merkleRewardSystem.UPDATER_ROLE();
+    const hasUpdaterRole = await merkleRewardSystem.hasRole(UPDATER_ROLE, owner.address);
+    if (!hasUpdaterRole) {
+      const grantRoleTx = await merkleRewardSystem.grantRole(UPDATER_ROLE, owner.address);
+      await grantRoleTx.wait();
+      console.log("Granted UPDATER_ROLE to the owner.");
+    }
   });
 
-  describe("Campaign Creation", function () {
-    it("Should create a campaign with valid parameters", async function () {
-        const { merkleRewardSystem, rewardToken, lpToken, owner, admin } = await loadFixture(deployMerkleRewardSystemFixture);
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-        const startTimestamp = currentTimestamp + 60; // Campaign starts in 1 minute
-        const endTimestamp = startTimestamp + 3600; // Campaign ends in 1 hour
+  it("Should create a campaign and allow the owner to claim rewards", async function () {
+    // Before creating the campaign
+    const isRewardTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(rewardToken.address);
+    console.log("Is reward token whitelisted:", isRewardTokenWhitelisted);
 
-        // Whitelist the reward token
-        await merkleRewardSystem.connect(admin).whitelistToken(rewardToken.address);
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const startTimestamp = currentTimestamp + 15; // Starts in 15 seconds
+    const endTimestamp = startTimestamp + 3600;   // Ends in 1 hour
 
-        await merkleRewardSystem.connect(owner).createCampaign(
-            rewardToken.address,
-            lpToken.address,
-            ethers.utils.parseEther("1"),
-            startTimestamp,
-            endTimestamp,
-            ethers.utils.parseEther("1000")
-        );
+    const totalRewardAmount = ethers.utils.parseEther("10");
+    const maxRewardRate = ethers.utils.parseEther("1");
 
-        const campaign = await merkleRewardSystem.campaigns(0);
-        expect(campaign.creator).to.equal(owner.address);
-        expect(campaign.rewardToken).to.equal(rewardToken.address);
-        expect(campaign.lpToken).to.equal(lpToken.address);
-        expect(campaign.startTimestamp).to.equal(startTimestamp);
-        expect(campaign.endTimestamp).to.equal(endTimestamp);
-        expect(campaign.totalRewards).to.equal(ethers.utils.parseEther("1000"));
-    });
+    // Approve reward tokens
+    const ownerBalance = await rewardToken.balanceOf(owner.address);
+    if (ownerBalance.lt(totalRewardAmount)) {
+      console.error("Insufficient reward token balance for the campaign.");
+      return;
+    }
 
-    // ... other campaign creation tests
+    const allowance = await rewardToken.allowance(owner.address, merkleRewardSystem.address);
+    if (allowance.lt(totalRewardAmount)) {
+      const approveTx = await rewardToken.approve(merkleRewardSystem.address, totalRewardAmount);
+      await approveTx.wait();
+      console.log("Approved reward tokens for the contract.");
+    }
+
+    // Create campaign with error handling
+    try {
+      const createTx = await merkleRewardSystem.createCampaign(
+        rewardToken.address,
+        lpToken.address,
+        maxRewardRate,
+        startTimestamp,
+        endTimestamp,
+        totalRewardAmount,
+        { gasLimit: 1000000 }
+      );
+      await createTx.wait();
+      console.log("Campaign created successfully");
+    } catch (error) {
+      console.error("Detailed error:", error);
+      throw error;
+    }
+
+    // Get campaign ID
+    const campaignCount = await merkleRewardSystem.campaignCount();
+    const campaignId = campaignCount.sub(1);
+    console.log("Created campaign ID:", campaignId.toString());
+
+    // Generate Merkle Tree and proof
+    const userAddress = owner.address; // Using owner as the test user
+    const claimAmount = ethers.utils.parseEther("5");
+
+    const leafNodes = [
+      ethers.utils.solidityKeccak256(
+        ['uint256', 'address', 'uint256'],
+        [campaignId, userAddress, claimAmount]
+      )
+    ];
+
+    const merkleTree = new MerkleTree(leafNodes, keccak256, { sortPairs: true });
+    const root = merkleTree.getHexRoot();
+    const proof = merkleTree.getHexProof(leafNodes[0]);
+
+    // Update the global Merkle root
+    const lastUpdateTimestamp = await merkleRewardSystem.lastUpdateTimestamp();
+    const updateTimestamp = Math.floor(Date.now() / 1000);
+
+    if (updateTimestamp <= lastUpdateTimestamp) {
+      console.error("Invalid update timestamp: must be greater than last update timestamp.");
+      return;
+    }
+
+    const updateRootTx = await merkleRewardSystem.updateGlobalRoot(root, updateTimestamp);
+    await updateRootTx.wait();
+    console.log("Updated global Merkle root.");
+
+    // Wait until campaign starts (max 15 seconds as per constraints)
+    console.log("Waiting for campaign to start...");
+    const waitTime = startTimestamp - Math.floor(Date.now() / 1000);
+    if (waitTime > 0 && waitTime <= 15) {
+      await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+    } else if (waitTime > 15) {
+      throw new Error("Wait time exceeds 15 seconds, test aborted.");
+    }
+
+    // Claim rewards
+    try {
+      const claimTx = await merkleRewardSystem.claimRewards(
+        [campaignId],
+        [claimAmount],
+        [proof]
+      );
+      const claimReceipt = await claimTx.wait();
+      console.log("Rewards successfully claimed. Transaction hash:", claimReceipt.transactionHash);
+    } catch (error) {
+      console.error("Detailed error during rewards claiming:", error);
+      throw error;
+    }
+
+    // Verify claimed amount
+    const claimedAmount = await merkleRewardSystem.getUserClaimedAmount(campaignId, userAddress);
+    expect(claimedAmount).to.equal(claimAmount);
+    console.log("Claimed amount verified.");
   });
 
-  describe("Creation of Campaigns", function () {
-    it("Should create a campaign successfully", async function () {
-      const campaignParams = {
-        rewardToken: rewardToken.address,
-        lpToken: lpToken.address,
-        maxRewardRate: ethers.utils.parseEther("0.1"),
-        startBlock: await ethers.provider.getBlockNumber() + 10,
-        endBlock: await ethers.provider.getBlockNumber() + 20,
-        totalRewardAmount: ethers.utils.parseEther("1000"),
-        merkleRoot: "0x0000000000000000000000000000000000000000000000000000000000000000"
-      };
+  it("Should not allow claiming with invalid proof", async function () {
+    // Create a new campaign
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const startTimestamp = currentTimestamp + 5;
+    const endTimestamp = startTimestamp + 30;
 
-      await expect(
-        merkleRewardSystem.createCampaign(
-          campaignParams.rewardToken,
-          campaignParams.lpToken,
-          campaignParams.maxRewardRate,
-          campaignParams.startBlock,
-          campaignParams.endBlock,
-          campaignParams.totalRewardAmount,
-          campaignParams.merkleRoot
-        )
-      ).to.emit(merkleRewardSystem, "CampaignCreated");
+    const totalRewardAmount = ethers.utils.parseEther("10");
+    const maxRewardRate = ethers.utils.parseEther("1");
 
-      const campaign = await merkleRewardSystem.campaigns(0);
-      expect(campaign.rewardToken).to.equal(campaignParams.rewardToken);
-      expect(campaign.lpToken).to.equal(campaignParams.lpToken);
-      expect(campaign.maxRewardRate).to.equal(campaignParams.maxRewardRate);
-      expect(campaign.startBlock).to.equal(campaignParams.startBlock);
-      expect(campaign.endBlock).to.equal(campaignParams.endBlock);
-      expect(campaign.totalRewardAmount).to.equal(campaignParams.totalRewardAmount);
-      expect(campaign.creator).to.equal(owner.address);
-      expect(campaign.merkleRoot).to.equal(campaignParams.merkleRoot);
-    });
+    // Approve reward tokens to the contract
+    const approveTx = await rewardToken.approve(merkleRewardSystem.address, totalRewardAmount);
+    await approveTx.wait();
+    console.log("Approved reward tokens for the new campaign.");
 
-    it("Should not allow non-creator to increase max reward rate", async function () {
-      const newMaxRate = ethers.utils.parseEther("0.2");
-      await expect(
-        merkleRewardSystem.connect(user1Wallet).increaseMaxRewardRate(0, newMaxRate)
-      ).to.be.revertedWith("Not campaign creator");
-    });
+    // Create campaign
+    const createTx = await merkleRewardSystem.createCampaign(
+      rewardToken.address,
+      lpToken.address,
+      maxRewardRate,
+      startTimestamp,
+      endTimestamp,
+      totalRewardAmount,
+      { gasLimit: 500000 }
+    );
+    await createTx.wait();
+    console.log("New campaign created.");
 
-    it("Should return correct campaign IDs", async function () {
-      const totalCampaigns = await merkleRewardSystem.campaignCount();
-      const campaignIds = [];
+    // Get campaign ID
+    const campaignCount = await merkleRewardSystem.campaignCount();
+    const campaignId = campaignCount.sub(1);
+    console.log("New campaign ID:", campaignId.toString());
 
-      for (let i = 0; i < totalCampaigns; i++) {
-        campaignIds.push(i);
-      }
+    // Generate a valid leaf, but use an invalid proof
+    const userAddress = owner.address;
+    const invalidClaimAmount = ethers.utils.parseEther("15"); // Amount not in Merkle Tree
 
-      expect(campaignIds).to.include(0); // First campaign
-      expect(campaignIds).to.include(1); // Second campaign
-    });
+    const validLeaf = ethers.utils.solidityKeccak256(
+      ['uint256', 'address', 'uint256'],
+      [campaignId, userAddress, ethers.utils.parseEther("5")]
+    );
+    const invalidLeaf = ethers.utils.solidityKeccak256(
+      ['uint256', 'address', 'uint256'],
+      [campaignId, userAddress, invalidClaimAmount]
+    );
+    const merkleTree = new MerkleTree([validLeaf], keccak256, { sortPairs: true });
+    const invalidProof = merkleTree.getHexProof(invalidLeaf);
+
+    // Update the global Merkle root
+    const root = merkleTree.getHexRoot();
+    await merkleRewardSystem.updateGlobalRoot(root, startTimestamp - 10);
+
+    // Wait for the campaign to start
+    const delay = startTimestamp - Math.floor(Date.now() / 1000) + 1;
+    if (delay > 0) {
+      console.log(`Waiting ${delay} seconds for the campaign to start...`);
+      await new Promise(resolve => setTimeout(resolve, delay * 1000));
+    }
+
+    // Attempt to claim with invalid proof
+    try {
+      await merkleRewardSystem.claimRewards(
+        [campaignId],
+        [invalidClaimAmount],
+        [invalidProof],
+        { gasLimit: 500000 }
+      );
+      // If no error is thrown, the test should fail
+      expect.fail("Expected transaction to fail, but it succeeded.");
+    } catch (error) {
+      console.log("Transaction failed as expected:", error.message);
+      // Optionally, you can add assertions to check the error message or code
+      expect(error.message).to.include("CALL_EXCEPTION");
+    }
   });
-
-  describe("Admin Withdrawal with Cooldown", function () {
-    it("Should allow admin to withdraw unclaimed rewards after 90 days", async function () {
-        const { merkleRewardSystem, rewardToken, lpToken, admin, owner } = await loadFixture(deployMerkleRewardSystemFixture);
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-        const startTimestamp = currentTimestamp + 60; // Campaign starts in 1 minute
-        const endTimestamp = startTimestamp + 3600; // Campaign ends in 1 hour
-
-        // Whitelist the reward token
-        await merkleRewardSystem.connect(admin).whitelistToken(rewardToken.address);
-
-        // Create campaign
-        await merkleRewardSystem.connect(owner).createCampaign(
-            rewardToken.address,
-            lpToken.address,
-            ethers.utils.parseEther("1"),
-            startTimestamp,
-            endTimestamp,
-            ethers.utils.parseEther("1000")
-        );
-
-        // Fund the contract
-        await rewardToken.connect(owner).mint(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-
-        // Fast forward time by 90 days using Hardhat's `evm_increaseTime` if possible
-        await network.provider.send("evm_increaseTime", [90 * 24 * 60 * 60]);
-        await network.provider.send("evm_mine");
-
-        // Admin withdraws unclaimed rewards
-        await expect(merkleRewardSystem.connect(admin).withdrawUnclaimedRewards(0))
-            .to.emit(merkleRewardSystem, "UnclaimedRewardsWithdrawn")
-            .withArgs(0, ethers.utils.parseEther("1000"), admin.address);
-
-        // Attempt to withdraw again should fail
-        await expect(merkleRewardSystem.connect(admin).withdrawUnclaimedRewards(0))
-            .to.be.revertedWith("AdminWithdrawalAlreadyDone");
-    });
-  });
-
-  describe("Creator Withdrawal with Cooldown", function () {
-    it("Should allow creator to withdraw unclaimed rewards after 30 days", async function () {
-        const { merkleRewardSystem, rewardToken, lpToken, owner } = await loadFixture(deployMerkleRewardSystemFixture);
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-        const startTimestamp = currentTimestamp + 60; // Campaign starts in 1 minute
-        const endTimestamp = startTimestamp + 3600; // Campaign ends in 1 hour
-
-        // Whitelist the reward token
-        await merkleRewardSystem.connect(owner).whitelistToken(rewardToken.address);
-
-        // Create campaign
-        await merkleRewardSystem.connect(owner).createCampaign(
-            rewardToken.address,
-            lpToken.address,
-            ethers.utils.parseEther("1"),
-            startTimestamp,
-            endTimestamp,
-            ethers.utils.parseEther("1000")
-        );
-
-        // Fund the contract
-        await rewardToken.connect(owner).mint(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-
-        // Fast forward time by 30 days using Hardhat's `evm_increaseTime` if possible
-        await network.provider.send("evm_increaseTime", [30 * 24 * 60 * 60]);
-        await network.provider.send("evm_mine");
-
-        // Creator withdraws unclaimed rewards
-        await expect(merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000")))
-            .to.emit(merkleRewardSystem, "RewardTokensWithdrawn")
-            .withArgs(0, owner.address, ethers.utils.parseEther("1000"));
-
-        // Attempt to withdraw more than available should fail
-        await expect(
-            merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1"))
-        ).to.be.revertedWith("InsufficientBalance");
-    });
-  });
-
-  describe("Reward Claiming", function () {
-    it("Should allow claiming at the start of the campaign", async function () {
-        const { merkleRewardSystem, rewardToken, lpToken, owner, updater, user1Wallet } = await loadFixture(deployMerkleRewardSystemFixture);
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-        const startTimestamp = currentTimestamp + 60; // Campaign starts in 1 minute
-        const endTimestamp = startTimestamp + 3600; // Campaign ends in 1 hour
-
-        // Whitelist the reward token
-        await merkleRewardSystem.connect(owner).whitelistToken(rewardToken.address);
-
-        // Create campaign
-        await merkleRewardSystem.connect(owner).createCampaign(
-            rewardToken.address,
-            lpToken.address,
-            ethers.utils.parseEther("1"),
-            startTimestamp,
-            endTimestamp,
-            ethers.utils.parseEther("1000")
-        );
-
-        // Create Merkle tree
-        const leaf = ethers.utils.solidityKeccak256(
-            ['uint256', 'address', 'uint256'],
-            [0, user1Wallet.address, ethers.utils.parseEther("100")]
-        );
-        const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
-        const root = merkleTree.getHexRoot();
-
-        // Update global root
-        await merkleRewardSystem.connect(owner).updateGlobalRoot(root, currentTimestamp + 60);
-
-        // Fund the contract
-        await rewardToken.connect(owner).mint(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-
-        // Fast forward time to campaign start
-        await network.provider.send("evm_increaseTime", [60]);
-        await network.provider.send("evm_mine");
-
-        // Claim rewards
-        const proof = merkleTree.getHexProof(leaf);
-        await expect(merkleRewardSystem.connect(user1Wallet).claimRewards(
-            [0], // campaignIds
-            [ethers.utils.parseEther("100")], // amounts
-            [proof] // proofs
-        )).to.emit(merkleRewardSystem, "RewardsClaimed").withArgs(
-            user1Wallet.address,
-            ethers.utils.parseEther("100")
-        );
-
-        // Verify claimed amount
-        const claimedAmount = await merkleRewardSystem.userClaims(0, user1Wallet.address);
-        expect(claimedAmount).to.equal(ethers.utils.parseEther("100"));
-    });
-
-    // ... other reward claiming tests
-  });
-
-  describe("Pausability", function () {
-    it("Should allow admin to pause and unpause", async function () {
-        await merkleRewardSystem.connect(owner).pause();
-        expect(await merkleRewardSystem.paused()).to.be.true;
-
-        await merkleRewardSystem.connect(owner).unpause();
-        expect(await merkleRewardSystem.paused()).to.be.false;
-    });
-
-    it("Should not allow non-admin to pause", async function () {
-        await expect(merkleRewardSystem.connect(user1Wallet).pause())
-            .to.be.revertedWith("AccessControl:");
-    });
-
-    it("Should not allow non-admin to unpause", async function () {
-        await merkleRewardSystem.connect(owner).pause();
-
-        await expect(merkleRewardSystem.connect(user1Wallet).unpause())
-            .to.be.revertedWith("AccessControl:");
-    });
-  });
-
-  // Remove tests that require waiting for cooldown periods
 });

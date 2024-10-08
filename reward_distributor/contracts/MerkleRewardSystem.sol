@@ -36,11 +36,10 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
     mapping(uint256 => Campaign) public campaigns;
     mapping(address => bool) public whitelistedTokens;
     mapping(uint256 => mapping(address => uint256)) public userClaims; // campaignId => user => amount claimed
-    uint256 public totalCampaigns;
     uint256 public maxTokensPerBatch = 5; // Initial value set in constructor
-
     bytes32 public globalMerkleRoot;
     uint256 public lastUpdateTimestamp;
+    uint256 public campaignCount;
 
     // Events
     event CampaignCreated(
@@ -83,6 +82,7 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
     error TooManyTokens();
     error AdminWithdrawalAlreadyDone();
     error CooldownPeriodNotPassed();
+    error InvalidCumulativeAmount();
 
     constructor() {
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -110,7 +110,7 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
         if (endTimestamp <= startTimestamp || endTimestamp > startTimestamp + MAX_CAMPAIGN_DURATION) revert InvalidCampaignDuration();
         if (startTimestamp < block.timestamp) revert InvalidStartTimestamp();
 
-        uint256 campaignId = totalCampaigns++;
+        uint256 campaignId = campaignCount++;
         campaigns[campaignId] = Campaign({
             creator: msg.sender,
             rewardToken: rewardToken,
@@ -140,40 +140,46 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
 
     function claimRewards(
         uint256[] calldata campaignIds,
-        uint256[] calldata amounts,
+        uint256[] calldata cumulativeAmounts,
         bytes32[][] calldata merkleProofs
     ) external nonReentrant whenNotPaused {
         uint256 numClaims = campaignIds.length;
-        if (numClaims != amounts.length || numClaims != merkleProofs.length) revert InvalidInputArrayLengths();
+        if (numClaims != cumulativeAmounts.length || numClaims != merkleProofs.length) revert InvalidInputArrayLengths();
         if (numClaims > maxTokensPerBatch) revert TooManyTokens();
 
-        uint256 totalAmount = 0;
+        uint256 totalClaimAmount = 0;
 
         for (uint256 i = 0; i < numClaims; i++) {
             uint256 campaignId = campaignIds[i];
-            uint256 amount = amounts[i];
+            uint256 cumulativeAmount = cumulativeAmounts[i];
 
             Campaign storage campaign = campaigns[campaignId];
 
             if (block.timestamp < campaign.startTimestamp) revert ClaimNotAllowed();
 
-            // Reconstruct the leaf
-            bytes32 leaf = keccak256(abi.encodePacked(campaignId, msg.sender, amount));
+            // Reconstruct the leaf with cumulative amount
+            bytes32 leaf = keccak256(abi.encodePacked(campaignId, msg.sender, cumulativeAmount));
 
             if (!MerkleProof.verify(merkleProofs[i], globalMerkleRoot, leaf)) revert InvalidProof();
 
             uint256 alreadyClaimed = userClaims[campaignId][msg.sender];
-            if (alreadyClaimed + amount > campaign.maxRewardRate * REWARD_PRECISION) revert ExceedsEntitlement();
-            if (campaign.totalRewards - campaign.claimedRewards < amount) revert InsufficientRewardBalance();
 
-            userClaims[campaignId][msg.sender] = alreadyClaimed + amount;
-            campaign.claimedRewards += amount;
+            if (cumulativeAmount < alreadyClaimed) revert InvalidCumulativeAmount();
 
-            IERC20(campaign.rewardToken).safeTransfer(msg.sender, amount);
-            totalAmount += amount;
+            uint256 claimableAmount = cumulativeAmount - alreadyClaimed;
+            if (claimableAmount == 0) continue; // Nothing to claim
+
+            if (campaign.totalRewards - campaign.claimedRewards < claimableAmount) revert InsufficientRewardBalance();
+
+            // Update user's claimed amount to the new cumulative amount
+            userClaims[campaignId][msg.sender] = cumulativeAmount;
+            campaign.claimedRewards += claimableAmount;
+
+            IERC20(campaign.rewardToken).safeTransfer(msg.sender, claimableAmount);
+            totalClaimAmount += claimableAmount;
         }
 
-        emit RewardsClaimed(msg.sender, totalAmount);
+        emit RewardsClaimed(msg.sender, totalClaimAmount);
     }
 
     function withdrawRewardTokens(uint256 campaignId, uint256 amount) external nonReentrant {
@@ -233,7 +239,7 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
     }
 
     function getCampaignIds(uint256 startIndex, uint256 endIndex) external view returns (uint256[] memory) {
-        if (startIndex >= endIndex || endIndex > totalCampaigns) revert InvalidInputArrayLengths();
+        if (startIndex >= endIndex || endIndex > campaignCount) revert InvalidInputArrayLengths();
         uint256[] memory ids = new uint256[](endIndex - startIndex);
         for (uint256 i = startIndex; i < endIndex; i++) {
             ids[i - startIndex] = i;

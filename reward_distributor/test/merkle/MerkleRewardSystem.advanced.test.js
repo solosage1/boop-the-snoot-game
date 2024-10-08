@@ -4,55 +4,86 @@ const { MerkleTree } = require('merkletreejs');
 const keccak256 = require('keccak256');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 
-describe("MerkleRewardSystem Advanced Tests", function () {
-  let merkleRewardSystem, rewardToken, lpToken, owner, admin, updater;
-  let user1Wallet, user2Wallet, user3Wallet;
+describe("MerkleRewardSystem Integration Tests", function () {
+  let merkleRewardSystem;
+  let rewardToken;
+  let lpToken;
+  let owner;
 
-  async function deployMerkleRewardSystemFixture() {
-    const [ownerSigner, adminSigner, updaterSigner] = await ethers.getSigners();
-    owner = ownerSigner;
-    admin = adminSigner;
-    updater = updaterSigner;
+  const OWNER_PRIVATE_KEY = process.env.PRIVATE_KEY;
+  const DEPLOYED_CONTRACT_ADDRESS = process.env.DEPLOYED_CONTRACT_ADDRESS;
+  const REWARD_TOKEN_ADDRESS = process.env.REWARD_TOKEN_ADDRESS;
+  const LP_TOKEN_ADDRESS = process.env.LP_TOKEN_ADDRESS;
+  const RPC_URL = process.env.BARTIO_RPC_URL;
 
-    // Deploy mock tokens
-    const MockERC20 = await ethers.getContractFactory("MockERC20");
-    rewardToken = await MockERC20.deploy("Reward Token", "RWD");
-    await rewardToken.deployed();
+  before(async function () {
+    // Set up provider and signer
+    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const ownerWallet = new ethers.Wallet(OWNER_PRIVATE_KEY, provider);
+    owner = ownerWallet;
 
-    lpToken = await MockERC20.deploy("LP Token", "LP");
-    await lpToken.deployed();
+    // Get contract instance
+    const MerkleRewardSystem = await ethers.getContractFactory("MerkleRewardSystem", owner);
+    merkleRewardSystem = MerkleRewardSystem.attach(DEPLOYED_CONTRACT_ADDRESS);
 
-    // Deploy the MerkleRewardSystem contract
-    const MerkleRewardSystem = await ethers.getContractFactory("MerkleRewardSystem");
-    merkleRewardSystem = await MerkleRewardSystem.deploy();
-    await merkleRewardSystem.deployed();
+    // Connect to existing Reward Token
+    const ERC20_ABI = [
+      "function decimals() view returns (uint8)",
+      "function symbol() view returns (string)",
+      "function name() view returns (string)",
+      "function totalSupply() view returns (uint256)",
+      "function balanceOf(address owner) view returns (uint256)",
+      "function allowance(address owner, address spender) view returns (uint256)",
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function transfer(address to, uint256 amount) returns (bool)",
+      "function transferFrom(address from, address to, uint256 amount) returns (bool)",
+      "function mint(address to, uint256 amount) external" // Ensure mint function exists
+    ];
 
-    // Assign roles
-    await merkleRewardSystem.grantRole(await merkleRewardSystem.ADMIN_ROLE(), admin.address);
-    await merkleRewardSystem.grantRole(await merkleRewardSystem.UPDATER_ROLE(), updater.address);
+    rewardToken = new ethers.Contract(REWARD_TOKEN_ADDRESS, ERC20_ABI, owner);
+    lpToken = new ethers.Contract(LP_TOKEN_ADDRESS, ERC20_ABI, owner);
 
-    // Create user wallets
-    user1Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
-    user2Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
-    user3Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
-
-    // Fund user wallets with ETH
-    const wallets = [user1Wallet, user2Wallet, user3Wallet];
-    for (const wallet of wallets) {
-      await owner.sendTransaction({ to: wallet.address, value: ethers.utils.parseEther("1") });
+    // Mint reward tokens to the owner if necessary
+    const mintAmount = ethers.utils.parseEther("1000");
+    const ownerRewardBalance = await rewardToken.balanceOf(owner.address);
+    if (ownerRewardBalance.lt(mintAmount)) {
+      await rewardToken.mint(owner.address, mintAmount.sub(ownerRewardBalance));
+      console.log("Minted reward tokens to the owner.");
     }
 
-    // Mint and approve tokens
-    const mintAmount = ethers.utils.parseEther("1000000");
-    await rewardToken.mint(owner.address, mintAmount);
-    await lpToken.mint(owner.address, mintAmount);
+    // Approve reward tokens to the MerkleRewardSystem contract
+    const approveTx = await rewardToken.approve(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+    await approveTx.wait();
+    console.log("Approved reward tokens to MerkleRewardSystem.");
 
-    await rewardToken.connect(owner).approve(merkleRewardSystem.address, mintAmount);
-    await lpToken.connect(owner).approve(merkleRewardSystem.address, mintAmount);
-  }
+    // Whitelist the reward token
+    const isRewardTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(rewardToken.address);
+    if (!isRewardTokenWhitelisted) {
+      console.log("Whitelisting reward token...");
+      const whitelistRewardTokenTx = await merkleRewardSystem.whitelistToken(rewardToken.address);
+      await whitelistRewardTokenTx.wait();
+      console.log("Reward token whitelisted.");
+    } else {
+      console.log("Reward token already whitelisted.");
+    }
 
-  beforeEach(async function () {
-    await loadFixture(deployMerkleRewardSystemFixture);
+    // Whitelist the LP token if necessary
+    const isLPTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(lpToken.address);
+    if (!isLPTokenWhitelisted) {
+      console.log("Whitelisting LP token...");
+      const whitelistLPTokenTx = await merkleRewardSystem.whitelistToken(lpToken.address);
+      await whitelistLPTokenTx.wait();
+      console.log("LP token whitelisted.");
+    } else {
+      console.log("LP token already whitelisted.");
+    }
+
+    // Check and log balances and allowances
+    const ownerBalance = await rewardToken.balanceOf(owner.address);
+    console.log("Owner reward token balance:", ethers.utils.formatEther(ownerBalance));
+
+    const allowance = await rewardToken.allowance(owner.address, merkleRewardSystem.address);
+    console.log("Reward token allowance:", ethers.utils.formatEther(allowance));
   });
 
   describe("Campaign Creation Edge Cases", function () {
@@ -94,35 +125,22 @@ describe("MerkleRewardSystem Advanced Tests", function () {
         expect(campaign.creator).to.equal(owner.address);
       }
 
-      const totalCampaigns = await merkleRewardSystem.campaignCount();
-      expect(totalCampaigns).to.equal(campaignCount);
+      // Ensure campaignCount is accessed correctly
+      const actualCampaignCount = await merkleRewardSystem.campaignCount();
+      expect(actualCampaignCount).to.equal(campaignCount);
     });
 
     // Additional edge case tests can be added here
   });
 
   describe("Merkle Root Updates", function () {
-    it("Should allow the updater to update Merkle roots for campaigns", async function () {
-      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
-      const startTimestamp = currentTimestamp + 60;
-      const endTimestamp = startTimestamp + 3600;
-
-      await merkleRewardSystem.connect(owner).createCampaign(
-        rewardToken.address,
-        lpToken.address,
-        ethers.utils.parseEther("1"),
-        startTimestamp,
-        endTimestamp,
-        ethers.utils.parseEther("1000")
-      );
-
-      // New Merkle root
+    it("Should allow the updater to update global Merkle root", async function () {
       const newRoot = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("new merkle root"));
 
       await merkleRewardSystem.connect(updater).updateGlobalRoot(newRoot, (await ethers.provider.getBlock('latest')).timestamp);
 
-      const campaign = await merkleRewardSystem.campaigns(0);
-      expect(campaign.merkleRoot).to.equal(newRoot);
+      const updatedRoot = await merkleRewardSystem.globalMerkleRoot();
+      expect(updatedRoot).to.equal(newRoot);
     });
 
     it("Should prevent non-updaters from updating Merkle roots", async function () {
@@ -171,22 +189,23 @@ describe("MerkleRewardSystem Advanced Tests", function () {
         await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
       }
 
-      // Prepare claims for multiple campaigns
-      const amounts = [ethers.utils.parseEther("100"), ethers.utils.parseEther("150")];
+      // Prepare cumulative amounts for multiple campaigns
+      const cumulativeAmounts = [ethers.utils.parseEther("100"), ethers.utils.parseEther("250")]; // Cumulative amounts
       const campaignIds = [0, 1];
 
-      // Create leaves and Merkle trees
+      // Create leaves with cumulative amounts
       const leaves = campaignIds.map((campaignId, index) =>
         ethers.utils.solidityKeccak256(
           ['uint256', 'address', 'uint256'],
-          [campaignId, user1Wallet.address, amounts[index]]
+          [campaignId, user1Wallet.address, cumulativeAmounts[index]]
         )
       );
 
+      // Generate Merkle tree and root
       const merkleTree = new MerkleTree(leaves, keccak256, { sortPairs: true });
       const root = merkleTree.getHexRoot();
 
-      // Update Merkle roots
+      // Update Merkle root
       await merkleRewardSystem.connect(updater).updateGlobalRoot(root, (await ethers.provider.getBlock('latest')).timestamp);
 
       // Fast forward time to campaign start
@@ -196,19 +215,17 @@ describe("MerkleRewardSystem Advanced Tests", function () {
       // Get proofs
       const proofs = leaves.map(leaf => merkleTree.getHexProof(leaf));
 
-      // Claim rewards
-      await expect(
-        merkleRewardSystem.connect(user1Wallet).claimRewards(
-          campaignIds,
-          amounts,
-          proofs
-        )
-      ).to.emit(merkleRewardSystem, "RewardsClaimed");
+      // Claim rewards with cumulative amounts
+      await merkleRewardSystem.connect(user1Wallet).claimRewards(
+        campaignIds,
+        cumulativeAmounts,
+        proofs
+      );
 
       // Verify claimed amounts
       for (let i = 0; i < campaignIds.length; i++) {
         const claimedAmount = await merkleRewardSystem.userClaims(campaignIds[i], user1Wallet.address);
-        expect(claimedAmount).to.equal(amounts[i]);
+        expect(claimedAmount).to.equal(cumulativeAmounts[i]);
       }
     });
 
@@ -261,6 +278,60 @@ describe("MerkleRewardSystem Advanced Tests", function () {
         merkleRewardSystem.connect(user1Wallet).claimRewards(
           [campaignId],
           [amount],
+          [proof]
+        )
+      ).to.be.revertedWith("InvalidProof");
+    });
+
+    it("Should fail to claim with invalid cumulative amount", async function () {
+      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 60;
+      const endTimestamp = startTimestamp + 3600;
+
+      await merkleRewardSystem.connect(owner).createCampaign(
+        rewardToken.address,
+        lpToken.address,
+        ethers.utils.parseEther("1"),
+        startTimestamp,
+        endTimestamp,
+        ethers.utils.parseEther("1000")
+      );
+
+      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+
+      const amount = ethers.utils.parseEther("100");
+      const campaignId = 0;
+
+      // Correct leaf for user claim
+      const leaf = ethers.utils.solidityKeccak256(
+        ['uint256', 'address', 'uint256'],
+        [campaignId, user1Wallet.address, amount]
+      );
+
+      const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+      const root = merkleTree.getHexRoot();
+
+      // Update Merkle root
+      await merkleRewardSystem.connect(updater).updateGlobalRoot(root, (await ethers.provider.getBlock('latest')).timestamp);
+
+      // Fast forward time to campaign start
+      await network.provider.send("evm_increaseTime", [70]);
+      await network.provider.send("evm_mine");
+
+      const proof = merkleTree.getHexProof(leaf);
+
+      // Claim once
+      await merkleRewardSystem.connect(user1Wallet).claimRewards(
+        [campaignId],
+        [amount],
+        [proof]
+      );
+
+      // Attempt to claim with less than already claimed
+      await expect(
+        merkleRewardSystem.connect(user1Wallet).claimRewards(
+          [campaignId],
+          [ethers.utils.parseEther("50")], // Less than already claimed
           [proof]
         )
       ).to.be.revertedWith("InvalidProof");
