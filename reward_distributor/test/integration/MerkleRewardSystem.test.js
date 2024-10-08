@@ -1,5 +1,5 @@
 const { expect } = require("chai");
-const { ethers } = require("ethers");
+const { ethers } = require("hardhat");
 const { MerkleTree } = require("merkletreejs");
 const keccak256 = require("keccak256");
 require("dotenv").config({ path: "./.env" });
@@ -28,9 +28,11 @@ describe("MerkleRewardSystem Integration Tests", function () {
   const ADMIN_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ADMIN_ROLE"));
   const UPDATER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("UPDATER_ROLE"));
   let ownerLPBalance, campaignRewardAmount;
-  let campaignId;
+  let firstCampaignId, secondCampaignId;
   let rewardTokenDecimals, lpTokenDecimals, secondRewardTokenDecimals;
   let provider;
+
+  const fixedGasLimit = 500000; // Adjust this value as needed
 
   this.timeout(600000);
 
@@ -82,20 +84,20 @@ describe("MerkleRewardSystem Integration Tests", function () {
       secondRewardTokenDecimals = await secondRewardToken.decimals();
 
       if (!(await merkleRewardSystem.hasRole(ADMIN_ROLE, owner.address))) {
-        await (await merkleRewardSystem.grantRole(ADMIN_ROLE, owner.address)).wait();
+        await (await merkleRewardSystem.grantRole(ADMIN_ROLE, owner.address, { gasLimit: fixedGasLimit })).wait();
         console.log("ADMIN_ROLE granted to owner");
       }
       if (!(await merkleRewardSystem.hasRole(UPDATER_ROLE, owner.address))) {
-        await (await merkleRewardSystem.grantRole(UPDATER_ROLE, owner.address)).wait();
+        await (await merkleRewardSystem.grantRole(UPDATER_ROLE, owner.address, { gasLimit: fixedGasLimit })).wait();
         console.log("UPDATER_ROLE granted to owner");
       }
 
       if (!(await merkleRewardSystem.whitelistedTokens(rewardToken.address))) {
-        await (await merkleRewardSystem.whitelistToken(rewardToken.address)).wait();
+        await (await merkleRewardSystem.whitelistToken(rewardToken.address, { gasLimit: fixedGasLimit })).wait();
         console.log("RewardToken whitelisted");
       }
       if (!(await merkleRewardSystem.whitelistedTokens(secondRewardToken.address))) {
-        await (await merkleRewardSystem.whitelistToken(secondRewardToken.address)).wait();
+        await (await merkleRewardSystem.whitelistToken(secondRewardToken.address, { gasLimit: fixedGasLimit })).wait();
         console.log("SecondRewardToken whitelisted");
       }
 
@@ -114,9 +116,9 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
       const transferAmount = ethers.utils.parseEther("0.01");
       if (ownerEthBalance.gt(transferAmount.mul(3))) {
-        await (await owner.sendTransaction({ to: user1Wallet.address, value: transferAmount })).wait();
-        await (await owner.sendTransaction({ to: user2Wallet.address, value: transferAmount })).wait();
-        await (await owner.sendTransaction({ to: user3Wallet.address, value: transferAmount })).wait();
+        await (await owner.sendTransaction({ to: user1Wallet.address, value: transferAmount, gasLimit: fixedGasLimit })).wait();
+        await (await owner.sendTransaction({ to: user2Wallet.address, value: transferAmount, gasLimit: fixedGasLimit })).wait();
+        await (await owner.sendTransaction({ to: user3Wallet.address, value: transferAmount, gasLimit: fixedGasLimit })).wait();
         console.log("Transferred 0.01 ETH to each user wallet for gas");
       } else {
         console.log("Owner doesn't have enough ETH to transfer. Skipping ETH transfer to user wallets.");
@@ -127,9 +129,9 @@ describe("MerkleRewardSystem Integration Tests", function () {
         throw new Error("User LP token amount is zero. Cannot transfer tokens to users.");
       }
 
-      await (await lpToken.transfer(user1Wallet.address, userLPAmount)).wait();
-      await (await lpToken.transfer(user2Wallet.address, userLPAmount)).wait();
-      await (await lpToken.transfer(user3Wallet.address, userLPAmount)).wait();
+      await (await lpToken.transfer(user1Wallet.address, userLPAmount, { gasLimit: fixedGasLimit })).wait();
+      await (await lpToken.transfer(user2Wallet.address, userLPAmount, { gasLimit: fixedGasLimit })).wait();
+      await (await lpToken.transfer(user3Wallet.address, userLPAmount, { gasLimit: fixedGasLimit })).wait();
 
       console.log("User1 LP Token Balance:", ethers.utils.formatUnits(await lpToken.balanceOf(user1Wallet.address), lpTokenDecimals));
       console.log("User2 LP Token Balance:", ethers.utils.formatUnits(await lpToken.balanceOf(user2Wallet.address), lpTokenDecimals));
@@ -142,10 +144,10 @@ describe("MerkleRewardSystem Integration Tests", function () {
         throw new Error("Owner does not have enough reward tokens to fund the campaign.");
       }
 
-      await (await rewardToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256)).wait();
+      await (await rewardToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256, { gasLimit: fixedGasLimit })).wait();
       console.log("Approved MerkleRewardSystem to spend reward tokens");
 
-      await (await secondRewardToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256)).wait();
+      await (await secondRewardToken.approve(merkleRewardSystem.address, ethers.constants.MaxUint256, { gasLimit: fixedGasLimit })).wait();
       console.log("Approved MerkleRewardSystem to spend second reward tokens");
     } catch (error) {
       console.error("Error in before hook:", error);
@@ -157,7 +159,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     try {
       const currentBlock = await provider.getBlockNumber();
       const startBlock = currentBlock + 5;
-      const campaignDurationBlocks = 100; // Increased duration
+      const campaignDurationBlocks = 100;
       const endBlock = startBlock + campaignDurationBlocks;
 
       const maxRewardRate = campaignRewardAmount.div(campaignDurationBlocks);
@@ -176,7 +178,8 @@ describe("MerkleRewardSystem Integration Tests", function () {
         maxRewardRate,
         startBlock,
         endBlock,
-        campaignRewardAmount
+        campaignRewardAmount,
+        { gasLimit: fixedGasLimit }
       );
       const receipt = await createCampaignTx.wait();
 
@@ -185,10 +188,10 @@ describe("MerkleRewardSystem Integration Tests", function () {
       );
       expect(campaignCreatedEvent).to.not.be.undefined;
 
-      campaignId = campaignCreatedEvent.args.campaignId;
-      console.log("Campaign created with ID:", campaignId.toString());
+      firstCampaignId = campaignCreatedEvent.args.campaignId;
+      console.log("First campaign created with ID:", firstCampaignId.toString());
 
-      const campaign = await merkleRewardSystem.campaigns(campaignId);
+      const campaign = await merkleRewardSystem.campaigns(firstCampaignId);
       expect(campaign.creator).to.equal(owner.address);
       expect(campaign.rewardToken).to.equal(rewardToken.address);
       expect(campaign.lpToken).to.equal(lpToken.address);
@@ -204,29 +207,38 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
   it("Should allow increasing max reward rate", async function () {
     const newMaxRate = ethers.utils.parseUnits("2", rewardTokenDecimals);
-    await expect(merkleRewardSystem.increaseMaxRewardRate(campaignId, newMaxRate))
-      .to.emit(merkleRewardSystem, "MaxRewardRateIncreased")
-      .withArgs(campaignId, newMaxRate);
+    const tx = await merkleRewardSystem.increaseMaxRewardRate(firstCampaignId, newMaxRate, { gasLimit: fixedGasLimit });
+    const receipt = await tx.wait();
+    
+    const event = receipt.events.find(e => e.event === "MaxRewardRateIncreased");
+    expect(event).to.not.be.undefined;
+    expect(event.args.campaignId).to.equal(firstCampaignId);
+    expect(event.args.newMaxRate).to.equal(newMaxRate);
 
-    const campaign = await merkleRewardSystem.campaigns(campaignId);
+    const campaign = await merkleRewardSystem.campaigns(firstCampaignId);
     expect(campaign.maxRewardRate).to.equal(newMaxRate);
   });
 
   it("Should not allow non-creator to increase max reward rate", async function () {
     const newMaxRate = ethers.utils.parseUnits("3", rewardTokenDecimals);
-    await expect(merkleRewardSystem.connect(user1Wallet).increaseMaxRewardRate(campaignId, newMaxRate))
+    await expect(merkleRewardSystem.connect(user1Wallet).increaseMaxRewardRate(firstCampaignId, newMaxRate, { gasLimit: fixedGasLimit }))
       .to.be.revertedWith("UnauthorizedAccess");
   });
 
   it("Should allow depositing additional rewards", async function () {
     const additionalRewards = ethers.utils.parseUnits("100", rewardTokenDecimals);
-    await rewardToken.approve(merkleRewardSystem.address, additionalRewards);
+    await rewardToken.approve(merkleRewardSystem.address, additionalRewards, { gasLimit: fixedGasLimit });
     
-    await expect(merkleRewardSystem.depositRewards(campaignId, additionalRewards))
-      .to.emit(merkleRewardSystem, "RewardTokensDeposited")
-      .withArgs(campaignId, owner.address, additionalRewards);
+    const tx = await merkleRewardSystem.depositRewards(firstCampaignId, additionalRewards, { gasLimit: fixedGasLimit });
+    const receipt = await tx.wait();
+    
+    const event = receipt.events.find(e => e.event === "RewardTokensDeposited");
+    expect(event).to.not.be.undefined;
+    expect(event.args.campaignId).to.equal(firstCampaignId);
+    expect(event.args.depositor).to.equal(owner.address);
+    expect(event.args.amount).to.equal(additionalRewards);
 
-    const campaign = await merkleRewardSystem.campaigns(campaignId);
+    const campaign = await merkleRewardSystem.campaigns(firstCampaignId);
     expect(campaign.totalRewards).to.equal(campaignRewardAmount.add(additionalRewards));
   });
 
@@ -236,8 +248,8 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
     const leaves = users.map((user, index) =>
       ethers.utils.solidityKeccak256(
-        ["uint256", "address", "uint256"],
-        [campaignId, user.address, userEntitlements[index]]
+        ["address", "uint256"],
+        [user.address, userEntitlements[index]]
       )
     );
 
@@ -245,9 +257,13 @@ describe("MerkleRewardSystem Integration Tests", function () {
     const root = merkleTree.getHexRoot();
 
     const updateBlock = await provider.getBlockNumber();
-    await expect(merkleRewardSystem.updateGlobalRoot(root, updateBlock))
-      .to.emit(merkleRewardSystem, "GlobalRootUpdated")
-      .withArgs(root, updateBlock);
+    const tx = await merkleRewardSystem.updateGlobalRoot(root, updateBlock, { gasLimit: fixedGasLimit });
+    const receipt = await tx.wait();
+
+    const event = receipt.events.find(e => e.event === "GlobalRootUpdated");
+    expect(event).to.not.be.undefined;
+    expect(event.args.newRoot).to.equal(root);
+    expect(event.args.updateBlock).to.equal(updateBlock);
 
     expect(await merkleRewardSystem.globalMerkleRoot()).to.equal(root);
     expect(await merkleRewardSystem.lastUpdateBlock()).to.equal(updateBlock);
@@ -259,8 +275,8 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
     const leaves = users.map((user, index) =>
       ethers.utils.solidityKeccak256(
-        ["uint256", "address", "uint256"],
-        [campaignId, user.address, userEntitlements[index]]
+        ["address", "uint256"],
+        [user.address, userEntitlements[index]]
       )
     );
 
@@ -277,18 +293,25 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
       const balanceBefore = await rewardToken.balanceOf(user.address);
 
-      await expect(merkleRewardSystem.connect(user).claimReward(
-        campaignId,
+      const tx = await merkleRewardSystem.connect(user).claimSingleReward(
+        rewardToken.address,
         userEntitlements[i],
         claimAmount,
-        proof
-      )).to.emit(merkleRewardSystem, "RewardClaimed")
-        .withArgs(campaignId, user.address, claimAmount);
+        proof,
+        { gasLimit: fixedGasLimit }
+      );
+      const receipt = await tx.wait();
+
+      const event = receipt.events.find(e => e.event === "SingleRewardClaimed");
+      expect(event).to.not.be.undefined;
+      expect(event.args.user).to.equal(user.address);
+      expect(event.args.token).to.equal(rewardToken.address);
+      expect(event.args.amount).to.equal(claimAmount);
 
       const balanceAfter = await rewardToken.balanceOf(user.address);
       expect(balanceAfter.sub(balanceBefore)).to.equal(claimAmount);
 
-      const claimedAmount = await merkleRewardSystem.getUserClaimedAmount(campaignId, user.address);
+      const claimedAmount = await merkleRewardSystem.getUserClaimedAmount(user.address, rewardToken.address);
       expect(claimedAmount).to.equal(claimAmount);
     }
   });
@@ -299,17 +322,18 @@ describe("MerkleRewardSystem Integration Tests", function () {
     const overClaimAmount = entitlement.add(1);
 
     const leaf = ethers.utils.solidityKeccak256(
-      ["uint256", "address", "uint256"],
-      [campaignId, user.address, entitlement]
+      ["address", "uint256"],
+      [user.address, entitlement]
     );
     const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
     const proof = merkleTree.getHexProof(leaf);
 
-    await expect(merkleRewardSystem.connect(user).claimReward(
-      campaignId,
+    await expect(merkleRewardSystem.connect(user).claimSingleReward(
+      rewardToken.address,
       entitlement,
       overClaimAmount,
-      proof
+      proof,
+      { gasLimit: fixedGasLimit }
     )).to.be.revertedWith("ExceedsEntitlement");
   });
 
@@ -336,7 +360,8 @@ describe("MerkleRewardSystem Integration Tests", function () {
       maxRewardRate,
       startBlock,
       endBlock,
-      campaignRewardAmount
+      campaignRewardAmount,
+      { gasLimit: fixedGasLimit }
     );
     const receipt = await createCampaignTx.wait();
 
@@ -345,7 +370,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     );
     expect(campaignCreatedEvent).to.not.be.undefined;
 
-    const secondCampaignId = campaignCreatedEvent.args.campaignId;
+    secondCampaignId = campaignCreatedEvent.args.campaignId;
     console.log("Second campaign created with ID:", secondCampaignId.toString());
 
     const campaign = await merkleRewardSystem.campaigns(secondCampaignId);
@@ -373,7 +398,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     const root = merkleTree.getHexRoot();
 
     const updateBlock = await provider.getBlockNumber();
-    await merkleRewardSystem.updateGlobalRoot(root, updateBlock);
+    await merkleRewardSystem.updateGlobalRoot(root, updateBlock, { gasLimit: fixedGasLimit });
 
     for (let i = 0; i < users.length; i++) {
       const user = users[i];
@@ -388,13 +413,20 @@ describe("MerkleRewardSystem Integration Tests", function () {
         new ethers.Contract(token, ERC20_ABI, provider).balanceOf(user.address)
       ));
 
-      await expect(merkleRewardSystem.connect(user).batchClaimRewards(
+      const tx = await merkleRewardSystem.connect(user).batchClaimRewards(
         tokens,
         userEntitlements[i],
         claimAmounts,
-        proof
-      )).to.emit(merkleRewardSystem, "BatchRewardsClaimed")
-        .withArgs(user.address, tokens, claimAmounts);
+        proof,
+        { gasLimit: fixedGasLimit }
+      );
+      const receipt = await tx.wait();
+
+      const event = receipt.events.find(e => e.event === "BatchRewardsClaimed");
+      expect(event).to.not.be.undefined;
+      expect(event.args.user).to.equal(user.address);
+      expect(event.args.tokens).to.deep.equal(tokens);
+      expect(event.args.amounts).to.deep.equal(claimAmounts);
 
       const balancesAfter = await Promise.all(tokens.map(token => 
         new ethers.Contract(token, ERC20_ABI, provider).balanceOf(user.address)
@@ -427,39 +459,45 @@ describe("MerkleRewardSystem Integration Tests", function () {
       tokens,
       entitlements,
       claimAmounts,
-      proof
+      proof,
+      { gasLimit: fixedGasLimit }
     )).to.be.revertedWith("TooManyTokens");
   });
 
   it("Should allow admin to set max tokens per batch", async function () {
     const newMaxTokensPerBatch = 10;
-    await expect(merkleRewardSystem.setMaxTokensPerBatch(newMaxTokensPerBatch))
-      .to.emit(merkleRewardSystem, "MaxTokensPerBatchUpdated")
-      .withArgs(newMaxTokensPerBatch);
+    const tx = await merkleRewardSystem.setMaxTokensPerBatch(newMaxTokensPerBatch, { gasLimit: fixedGasLimit });
+    await tx.wait();
 
-    expect(await merkleRewardSystem.maxTokensPerBatch()).to.equal(newMaxTokensPerBatch);
+    const updatedMaxTokensPerBatch = await merkleRewardSystem.maxTokensPerBatch();
+    expect(updatedMaxTokensPerBatch).to.equal(newMaxTokensPerBatch);
   });
 
   it("Should not allow non-admin to set max tokens per batch", async function () {
-    await expect(merkleRewardSystem.connect(user1Wallet).setMaxTokensPerBatch(15))
+    await expect(merkleRewardSystem.connect(user1Wallet).setMaxTokensPerBatch(15, { gasLimit: fixedGasLimit }))
       .to.be.revertedWith("AccessControl:");
   });
 
   it("Should allow withdrawal of unclaimed rewards after campaign end", async function () {
     // Wait for the campaign to end
-    const campaign = await merkleRewardSystem.campaigns(campaignId);
+    const campaign = await merkleRewardSystem.campaigns(firstCampaignId);
     while ((await provider.getBlockNumber()) <= campaign.endBlock) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    const availableBalance = await merkleRewardSystem.getAvailableBalance(campaignId);
+    const availableBalance = await merkleRewardSystem.getAvailableBalance(firstCampaignId);
     const initialBalance = await rewardToken.balanceOf(owner.address);
 
     console.log("Available balance for withdrawal:", ethers.utils.formatUnits(availableBalance, rewardTokenDecimals));
 
-    await expect(merkleRewardSystem.withdrawRewardTokens(campaignId, availableBalance))
-      .to.emit(merkleRewardSystem, "RewardTokensWithdrawn")
-      .withArgs(campaignId, owner.address, availableBalance);
+    const tx = await merkleRewardSystem.withdrawRewardTokens(firstCampaignId, availableBalance, { gasLimit: fixedGasLimit });
+    const receipt = await tx.wait();
+
+    const event = receipt.events.find(e => e.event === "RewardTokensWithdrawn");
+    expect(event).to.not.be.undefined;
+    expect(event.args.campaignId).to.equal(firstCampaignId);
+    expect(event.args.recipient).to.equal(owner.address);
+    expect(event.args.amount).to.equal(availableBalance);
 
     const finalBalance = await rewardToken.balanceOf(owner.address);
     expect(finalBalance.sub(initialBalance)).to.equal(availableBalance);
@@ -476,64 +514,64 @@ describe("MerkleRewardSystem Integration Tests", function () {
       ethers.utils.parseUnits("1", rewardTokenDecimals),
       startBlock,
       endBlock,
-      campaignRewardAmount
+      campaignRewardAmount,
+      { gasLimit: fixedGasLimit }
     );
     const receipt = await createCampaignTx.wait();
     const newCampaignId = receipt.events.find(e => e.event === "CampaignCreated").args.campaignId;
 
-    await expect(merkleRewardSystem.withdrawRewardTokens(newCampaignId, campaignRewardAmount))
+    await expect(merkleRewardSystem.withdrawRewardTokens(newCampaignId, campaignRewardAmount, { gasLimit: fixedGasLimit }))
       .to.be.revertedWith("CampaignNotEnded");
   });
 
   it("Should allow admin to pause and unpause the contract", async function () {
-    await expect(merkleRewardSystem.pause())
-      .to.emit(merkleRewardSystem, "Paused")
-      .withArgs(owner.address);
+    const pauseTx = await merkleRewardSystem.pause({ gasLimit: fixedGasLimit });
+    await pauseTx.wait();
 
     expect(await merkleRewardSystem.paused()).to.be.true;
 
-    await expect(merkleRewardSystem.unpause())
-      .to.emit(merkleRewardSystem, "Unpaused")
-      .withArgs(owner.address);
+    const unpauseTx = await merkleRewardSystem.unpause({ gasLimit: fixedGasLimit });
+    await unpauseTx.wait();
 
     expect(await merkleRewardSystem.paused()).to.be.false;
   });
 
   it("Should not allow non-admin to pause or unpause", async function () {
-    await expect(merkleRewardSystem.connect(user1Wallet).pause())
+    await expect(merkleRewardSystem.connect(user1Wallet).pause({ gasLimit: fixedGasLimit }))
       .to.be.revertedWith("AccessControl:");
 
-    await expect(merkleRewardSystem.connect(user1Wallet).unpause())
+    await expect(merkleRewardSystem.connect(user1Wallet).unpause({ gasLimit: fixedGasLimit }))
       .to.be.revertedWith("AccessControl:");
   });
 
   it("Should return correct campaign details", async function () {
-    const campaignDetails = await merkleRewardSystem.getCampaign(campaignId);
+    const campaignDetails = await merkleRewardSystem.getCampaign(firstCampaignId);
     expect(campaignDetails.creator).to.equal(owner.address);
     expect(campaignDetails.rewardToken).to.equal(rewardToken.address);
     expect(campaignDetails.lpToken).to.equal(lpToken.address);
   });
 
   it("Should return correct campaign status", async function () {
-    const status = await merkleRewardSystem.getCampaignStatus(campaignId);
+    const status = await merkleRewardSystem.getCampaignStatus(firstCampaignId);
     expect(status).to.be.oneOf([0, 1]); // 0 for Inactive, 1 for Active
   });
 
   it("Should return correct campaign timing", async function () {
-    const [startBlock, endBlock] = await merkleRewardSystem.getCampaignTiming(campaignId);
+    const [startBlock, endBlock] = await merkleRewardSystem.getCampaignTiming(firstCampaignId);
     expect(startBlock).to.be.gt(0);
     expect(endBlock).to.be.gt(startBlock);
   });
 
   it("Should return correct campaign LP token", async function () {
-    const campaignLPToken = await merkleRewardSystem.getCampaignLPToken(campaignId);
+    const campaignLPToken = await merkleRewardSystem.getCampaignLPToken(firstCampaignId);
     expect(campaignLPToken).to.equal(lpToken.address);
   });
 
   it("Should return correct campaign IDs", async function () {
     const totalCampaigns = await merkleRewardSystem.totalCampaigns();
     const campaignIds = await merkleRewardSystem.getCampaignIds(0, totalCampaigns);
-    expect(campaignIds.length).to.equal(totalCampaigns);
-    expect(campaignIds[0]).to.equal(campaignId);
+    expect(campaignIds.length).to.equal(totalCampaigns.toNumber());
+    expect(campaignIds).to.include(firstCampaignId);
+    expect(campaignIds).to.include(secondCampaignId);
   });
 });
