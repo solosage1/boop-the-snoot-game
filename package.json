@@ -8,7 +8,11 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
+    "deploy": "gh-pages -d build",
+    "set-homepage-github": "jq '.homepage=\"https://solosage1.github.io/boop-the-snoot-game\"' package.json > temp.json && mv temp.json package.json",
+    "set-homepage-netlify": "jq '.homepage=\"/\"' package.json > temp.json && mv temp.json package.json",
+    "build:github": "npm run set-homepage-github && npm run build && npm run deploy",
+    "build:netlify": "npm run set-homepage-netlify && npm run build"
   },
   "keywords": [],
   "author": "",
@@ -28,7 +32,8 @@
     "eslint": "^9.10.0",
     "eslint-plugin-react": "^7.35.2",
     "gh-pages": "^6.1.1",
-    "react-scripts": "^5.0.1"
+    "react-scripts": "^5.0.1",
+    "jq": "^1.6"
   },
   "browserslist": {
     "production": [
@@ -42,6 +47,5 @@
       "last 1 safari version"
     ]
   },
-  "proxy": "http://localhost:3000",
-  "homepage": "https://solosage1.github.io/boop-the-snoot-game"
+  "proxy": "http://localhost:3000"
 }
