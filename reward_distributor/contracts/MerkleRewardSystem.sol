@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Business Source License 1.1
+
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
@@ -16,10 +16,8 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
     bytes32 public constant UPDATER_ROLE = keccak256("UPDATER_ROLE");
     uint256 public constant REWARD_PRECISION = 1e18;
     uint256 public constant MAX_CAMPAIGN_DURATION = 365 days;
-    uint256 public constant CLAIM_EXPIRATION = 365 days;
-
-    // Enums
-    enum CampaignStatus { Active, Inactive }
+    uint256 public constant CREATOR_WITHDRAW_COOLDOWN = 30 days;
+    uint256 public constant ADMIN_WITHDRAW_COOLDOWN = 90 days;
 
     // Structs
     struct Campaign {
@@ -27,44 +25,52 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
         address rewardToken;
         address lpToken;
         uint256 maxRewardRate;
-        uint256 startBlock;
-        uint256 endBlock;
+        uint256 startTimestamp;
+        uint256 endTimestamp;
         uint256 totalRewards;
         uint256 claimedRewards;
+        bool adminWithdrawn; // Tracks if admin has withdrawn unclaimed rewards
     }
 
     // State variables
     mapping(uint256 => Campaign) public campaigns;
     mapping(address => bool) public whitelistedTokens;
-    mapping(uint256 => address) public campaignToLPToken;
-    mapping(address => uint256[]) public lpTokenToCampaigns;
-    mapping(address => mapping(address => uint256)) public userTokenClaims;
+    mapping(uint256 => mapping(address => uint256)) public userClaims; // campaignId => user => amount claimed
     uint256 public totalCampaigns;
-    uint256 public maxTokensPerBatch;
+    uint256 public maxTokensPerBatch = 5; // Initial value set in constructor
 
     bytes32 public globalMerkleRoot;
-    uint256 public lastUpdateBlock;
+    uint256 public lastUpdateTimestamp;
 
     // Events
-    event CampaignCreated(uint256 indexed campaignId, address indexed creator, address rewardToken, address lpToken, uint256 maxRewardRate, uint256 startBlock, uint256 endBlock, uint256 totalRewards);
-    event GlobalRootUpdated(bytes32 newRoot, uint256 updateBlock);
+    event CampaignCreated(
+        uint256 indexed campaignId,
+        address indexed creator,
+        address rewardToken,
+        address lpToken,
+        uint256 maxRewardRate,
+        uint256 startTimestamp,
+        uint256 endTimestamp,
+        uint256 totalRewards
+    );
+    event GlobalRootUpdated(bytes32 newRoot, uint256 updateTimestamp);
     event TokenWhitelisted(address indexed token);
     event TokenWhitelistRemoved(address indexed token);
     event MaxRewardRateIncreased(uint256 indexed campaignId, uint256 newMaxRate);
     event RewardTokensDeposited(uint256 indexed campaignId, address indexed depositor, uint256 amount);
     event RewardTokensWithdrawn(uint256 indexed campaignId, address indexed recipient, uint256 amount);
-    event BatchRewardsClaimed(address indexed user, address[] tokens, uint256[] amounts);
-    event SingleRewardClaimed(address indexed user, address token, uint256 amount);
+    event RewardsClaimed(address indexed user, uint256 totalAmount);
+    event UnclaimedRewardsWithdrawn(uint256 indexed campaignId, uint256 amount, address indexed recipient);
 
     // Error definitions
     error InvalidRewardToken();
     error InvalidLPToken();
     error InvalidCampaignDuration();
-    error InvalidStartBlock();
+    error InvalidStartTimestamp();
     error UnauthorizedAccess();
     error InvalidMaxRate();
     error CampaignEnded();
-    error InvalidUpdateBlock();
+    error InvalidUpdateTimestamp();
     error InvalidInputArrayLengths();
     error ClaimNotAllowed();
     error InvalidProof();
@@ -75,25 +81,34 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
     error TokenAlreadyWhitelisted();
     error TokenNotWhitelisted();
     error TooManyTokens();
+    error AdminWithdrawalAlreadyDone();
+    error CooldownPeriodNotPassed();
 
     constructor() {
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(UPDATER_ROLE, msg.sender);
         maxTokensPerBatch = 5; // Set initial value
+    }
+
+    modifier onlyCreator(uint256 campaignId) {
+        Campaign storage campaign = campaigns[campaignId];
+        if (campaign.creator != msg.sender) revert UnauthorizedAccess();
+        _;
     }
 
     function createCampaign(
         address rewardToken,
         address lpToken,
         uint256 maxRewardRate,
-        uint256 startBlock,
-        uint256 endBlock,
+        uint256 startTimestamp,
+        uint256 endTimestamp,
         uint256 totalRewardAmount
     ) external whenNotPaused nonReentrant {
         if (!whitelistedTokens[rewardToken]) revert InvalidRewardToken();
         if (lpToken == address(0)) revert InvalidLPToken();
-        if (endBlock <= startBlock || endBlock > startBlock + MAX_CAMPAIGN_DURATION) revert InvalidCampaignDuration();
-        if (startBlock < block.number) revert InvalidStartBlock();
+        if (endTimestamp <= startTimestamp || endTimestamp > startTimestamp + MAX_CAMPAIGN_DURATION) revert InvalidCampaignDuration();
+        if (startTimestamp < block.timestamp) revert InvalidStartTimestamp();
 
         uint256 campaignId = totalCampaigns++;
         campaigns[campaignId] = Campaign({
@@ -101,105 +116,71 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
             rewardToken: rewardToken,
             lpToken: lpToken,
             maxRewardRate: maxRewardRate,
-            startBlock: startBlock,
-            endBlock: endBlock,
+            startTimestamp: startTimestamp,
+            endTimestamp: endTimestamp,
             totalRewards: totalRewardAmount,
-            claimedRewards: 0
+            claimedRewards: 0,
+            adminWithdrawn: false
         });
-
-        campaignToLPToken[campaignId] = lpToken;
-        lpTokenToCampaigns[lpToken].push(campaignId);
 
         IERC20(rewardToken).safeTransferFrom(msg.sender, address(this), totalRewardAmount);
 
-        emit CampaignCreated(campaignId, msg.sender, rewardToken, lpToken, maxRewardRate, startBlock, endBlock, totalRewardAmount);
+        emit CampaignCreated(campaignId, msg.sender, rewardToken, lpToken, maxRewardRate, startTimestamp, endTimestamp, totalRewardAmount);
         emit RewardTokensDeposited(campaignId, msg.sender, totalRewardAmount);
     }
 
-    function depositRewards(uint256 campaignId, uint256 amount) external nonReentrant {
-        Campaign storage campaign = campaigns[campaignId];
-        if (msg.sender != campaign.creator) revert UnauthorizedAccess();
-        if (block.number >= campaign.endBlock) revert CampaignEnded();
-
-        IERC20(campaign.rewardToken).safeTransferFrom(msg.sender, address(this), amount);
-        campaign.totalRewards += amount;
-
-        emit RewardTokensDeposited(campaignId, msg.sender, amount);
-    }
-
-    function increaseMaxRewardRate(uint256 campaignId, uint256 newMaxRate) external {
-        Campaign storage campaign = campaigns[campaignId];
-        if (msg.sender != campaign.creator) revert UnauthorizedAccess();
-        if (newMaxRate <= campaign.maxRewardRate) revert InvalidMaxRate();
-        if (block.number >= campaign.endBlock) revert CampaignEnded();
-
-        campaign.maxRewardRate = newMaxRate;
-        emit MaxRewardRateIncreased(campaignId, newMaxRate);
-    }
-
-    function updateGlobalRoot(bytes32 newRoot, uint256 updateBlock) external onlyRole(UPDATER_ROLE) {
-        if (updateBlock <= lastUpdateBlock) revert InvalidUpdateBlock();
+    function updateGlobalRoot(bytes32 newRoot, uint256 updateTimestamp) external onlyRole(UPDATER_ROLE) {
+        if (updateTimestamp <= lastUpdateTimestamp) revert InvalidUpdateTimestamp();
 
         globalMerkleRoot = newRoot;
-        lastUpdateBlock = updateBlock;
+        lastUpdateTimestamp = updateTimestamp;
 
-        emit GlobalRootUpdated(newRoot, updateBlock);
+        emit GlobalRootUpdated(newRoot, updateTimestamp);
     }
 
-    function setMaxTokensPerBatch(uint256 newMaxTokensPerBatch) external onlyRole(ADMIN_ROLE) {
-        if (newMaxTokensPerBatch == 0) revert("Max tokens per batch must be greater than 0");
-        maxTokensPerBatch = newMaxTokensPerBatch;
-    }
-
-    function batchClaimRewards(
-        address[] calldata tokens,
-        uint256[] calldata totalEntitledAmounts,
-        uint256[] calldata claimAmounts,
-        bytes32[] calldata merkleProof
+    function claimRewards(
+        uint256[] calldata campaignIds,
+        uint256[] calldata amounts,
+        bytes32[][] calldata merkleProofs
     ) external nonReentrant whenNotPaused {
-        if (tokens.length > maxTokensPerBatch) revert TooManyTokens();
-        if (tokens.length != totalEntitledAmounts.length || totalEntitledAmounts.length != claimAmounts.length) revert InvalidInputArrayLengths();
+        uint256 numClaims = campaignIds.length;
+        if (numClaims != amounts.length || numClaims != merkleProofs.length) revert InvalidInputArrayLengths();
+        if (numClaims > maxTokensPerBatch) revert TooManyTokens();
 
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, tokens, totalEntitledAmounts));
-        if (!MerkleProof.verify(merkleProof, globalMerkleRoot, leaf)) revert InvalidProof();
+        uint256 totalAmount = 0;
 
-        for (uint256 i = 0; i < tokens.length; i++) {
-            address token = tokens[i];
-            uint256 totalEntitled = totalEntitledAmounts[i];
-            uint256 claimAmount = claimAmounts[i];
-            uint256 alreadyClaimed = userTokenClaims[msg.sender][token];
+        for (uint256 i = 0; i < numClaims; i++) {
+            uint256 campaignId = campaignIds[i];
+            uint256 amount = amounts[i];
 
-            if (alreadyClaimed + claimAmount > totalEntitled) revert ExceedsEntitlement();
+            Campaign storage campaign = campaigns[campaignId];
 
-            userTokenClaims[msg.sender][token] = alreadyClaimed + claimAmount;
-            IERC20(token).safeTransfer(msg.sender, claimAmount);
+            if (block.timestamp < campaign.startTimestamp) revert ClaimNotAllowed();
+
+            // Reconstruct the leaf
+            bytes32 leaf = keccak256(abi.encodePacked(campaignId, msg.sender, amount));
+
+            if (!MerkleProof.verify(merkleProofs[i], globalMerkleRoot, leaf)) revert InvalidProof();
+
+            uint256 alreadyClaimed = userClaims[campaignId][msg.sender];
+            if (alreadyClaimed + amount > campaign.maxRewardRate * REWARD_PRECISION) revert ExceedsEntitlement();
+            if (campaign.totalRewards - campaign.claimedRewards < amount) revert InsufficientRewardBalance();
+
+            userClaims[campaignId][msg.sender] = alreadyClaimed + amount;
+            campaign.claimedRewards += amount;
+
+            IERC20(campaign.rewardToken).safeTransfer(msg.sender, amount);
+            totalAmount += amount;
         }
 
-        emit BatchRewardsClaimed(msg.sender, tokens, claimAmounts);
-    }
-
-    function claimSingleReward(
-        address token,
-        uint256 totalEntitledAmount,
-        uint256 claimAmount,
-        bytes32[] calldata merkleProof
-    ) external nonReentrant whenNotPaused {
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, token, totalEntitledAmount));
-        if (!MerkleProof.verify(merkleProof, globalMerkleRoot, leaf)) revert InvalidProof();
-
-        uint256 alreadyClaimed = userTokenClaims[msg.sender][token];
-        if (alreadyClaimed + claimAmount > totalEntitledAmount) revert ExceedsEntitlement();
-
-        userTokenClaims[msg.sender][token] = alreadyClaimed + claimAmount;
-        IERC20(token).safeTransfer(msg.sender, claimAmount);
-
-        emit SingleRewardClaimed(msg.sender, token, claimAmount);
+        emit RewardsClaimed(msg.sender, totalAmount);
     }
 
     function withdrawRewardTokens(uint256 campaignId, uint256 amount) external nonReentrant {
         Campaign storage campaign = campaigns[campaignId];
         if (msg.sender != campaign.creator) revert UnauthorizedAccess();
-        if (block.number <= campaign.endBlock) revert CampaignNotEnded();
+        if (block.timestamp <= campaign.endTimestamp + CREATOR_WITHDRAW_COOLDOWN) revert CooldownPeriodNotPassed();
+        if (block.timestamp < campaign.endTimestamp) revert CampaignNotEnded();
 
         uint256 availableBalance = campaign.totalRewards - campaign.claimedRewards;
         if (amount > availableBalance) revert InsufficientBalance();
@@ -208,6 +189,23 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
         IERC20(campaign.rewardToken).safeTransfer(msg.sender, amount);
 
         emit RewardTokensWithdrawn(campaignId, msg.sender, amount);
+    }
+
+    function withdrawUnclaimedRewards(uint256 campaignId) external nonReentrant onlyRole(ADMIN_ROLE) whenNotPaused {
+        Campaign storage campaign = campaigns[campaignId];
+        if (block.timestamp <= campaign.endTimestamp + ADMIN_WITHDRAW_COOLDOWN) revert CooldownPeriodNotPassed();
+        if (campaign.adminWithdrawn) revert AdminWithdrawalAlreadyDone();
+        if (block.timestamp < campaign.endTimestamp) revert CampaignNotEnded();
+
+        uint256 unclaimed = campaign.totalRewards - campaign.claimedRewards;
+        if (unclaimed == 0) revert InsufficientBalance();
+
+        campaign.totalRewards -= unclaimed;
+        campaign.adminWithdrawn = true;
+
+        IERC20(campaign.rewardToken).safeTransfer(msg.sender, unclaimed);
+
+        emit UnclaimedRewardsWithdrawn(campaignId, unclaimed, msg.sender);
     }
 
     function whitelistToken(address token) external onlyRole(ADMIN_ROLE) {
@@ -231,11 +229,11 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
     }
 
     function getCampaignLPToken(uint256 campaignId) external view returns (address) {
-        return campaignToLPToken[campaignId];
+        return campaigns[campaignId].lpToken;
     }
 
     function getCampaignIds(uint256 startIndex, uint256 endIndex) external view returns (uint256[] memory) {
-        require(startIndex < endIndex && endIndex <= totalCampaigns, "Invalid range");
+        if (startIndex >= endIndex || endIndex > totalCampaigns) revert InvalidInputArrayLengths();
         uint256[] memory ids = new uint256[](endIndex - startIndex);
         for (uint256 i = startIndex; i < endIndex; i++) {
             ids[i - startIndex] = i;
@@ -245,7 +243,7 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
 
     function getCampaignStatus(uint256 campaignId) public view returns (CampaignStatus) {
         Campaign storage campaign = campaigns[campaignId];
-        if (block.number >= campaign.startBlock && block.number <= campaign.endBlock) {
+        if (block.timestamp >= campaign.startTimestamp && block.timestamp <= campaign.endTimestamp) {
             return CampaignStatus.Active;
         } else {
             return CampaignStatus.Inactive;
@@ -258,22 +256,28 @@ contract MerkleRewardSystem is ReentrancyGuard, Pausable, AccessControl {
         maxRewardRate = campaign.maxRewardRate;
     }
 
-    function getCampaignTiming(uint256 campaignId) external view returns (uint256 startBlock, uint256 endBlock) {
+    function getCampaignTiming(uint256 campaignId) external view returns (uint256 startTimestamp, uint256 endTimestamp) {
         Campaign storage campaign = campaigns[campaignId];
-        startBlock = campaign.startBlock;
-        endBlock = campaign.endBlock;
+        startTimestamp = campaign.startTimestamp;
+        endTimestamp = campaign.endTimestamp;
     }
 
     function getCampaign(uint256 campaignId) external view returns (Campaign memory) {
         return campaigns[campaignId];
     }
 
-    function getUserClaimedAmount(address user, address token) external view returns (uint256) {
-        return userTokenClaims[user][token];
+    function getUserClaimedAmount(uint256 campaignId, address user) external view returns (uint256) {
+        return userClaims[campaignId][user];
     }
 
     function getAvailableBalance(uint256 campaignId) external view returns (uint256) {
         Campaign storage campaign = campaigns[campaignId];
         return campaign.totalRewards - campaign.claimedRewards;
+    }
+
+    enum CampaignStatus { Active, Inactive }
+
+    function isTokenWhitelisted(address token) external view returns (bool) {
+        return whitelistedTokens[token];
     }
 }
