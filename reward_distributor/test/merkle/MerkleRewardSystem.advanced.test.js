@@ -2,342 +2,136 @@ const { expect } = require('chai');
 const { ethers, network } = require('hardhat');
 const { MerkleTree } = require('merkletreejs');
 const keccak256 = require('keccak256');
-const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 
-describe("MerkleRewardSystem Integration Tests", function () {
-  let merkleRewardSystem;
+// Import the Chai matchers
+require("@nomicfoundation/hardhat-chai-matchers");
+
+describe("MerkleRewardSystem Advanced Tests", function () {
+  let boopTheSnoot;
   let rewardToken;
   let lpToken;
   let owner;
+  let admin;
+  let updater;
+  let user1;
+  let user2;
+  let user3;
 
-  const OWNER_PRIVATE_KEY = process.env.PRIVATE_KEY;
-  const DEPLOYED_CONTRACT_ADDRESS = process.env.DEPLOYED_CONTRACT_ADDRESS;
-  const REWARD_TOKEN_ADDRESS = process.env.REWARD_TOKEN_ADDRESS;
-  const LP_TOKEN_ADDRESS = process.env.LP_TOKEN_ADDRESS;
-  const RPC_URL = process.env.BARTIO_RPC_URL;
+  beforeEach(async function () {
+    [owner, admin, updater, user1, user2, user3] = await ethers.getSigners();
 
-  before(async function () {
-    // Set up provider and signer
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-    const ownerWallet = new ethers.Wallet(OWNER_PRIVATE_KEY, provider);
-    owner = ownerWallet;
+    // Deploy BoopTheSnoot contract
+    const BoopTheSnootFactory = await ethers.getContractFactory("BoopTheSnoot");
+    boopTheSnoot = await BoopTheSnootFactory.deploy();
+    await boopTheSnoot.deployed();
 
-    // Get contract instance
-    const MerkleRewardSystem = await ethers.getContractFactory("MerkleRewardSystem", owner);
-    merkleRewardSystem = MerkleRewardSystem.attach(DEPLOYED_CONTRACT_ADDRESS);
+    // Deploy mock tokens
+    const MockERC20 = await ethers.getContractFactory("MockERC20");
+    rewardToken = await MockERC20.deploy("Reward Token", "RWD");
+    lpToken = await MockERC20.deploy("LP Token", "LP");
+    await rewardToken.deployed();
+    await lpToken.deployed();
 
-    // Connect to existing Reward Token
-    const ERC20_ABI = [
-      "function decimals() view returns (uint8)",
-      "function symbol() view returns (string)",
-      "function name() view returns (string)",
-      "function totalSupply() view returns (uint256)",
-      "function balanceOf(address owner) view returns (uint256)",
-      "function allowance(address owner, address spender) view returns (uint256)",
-      "function approve(address spender, uint256 amount) returns (bool)",
-      "function transfer(address to, uint256 amount) returns (bool)",
-      "function transferFrom(address from, address to, uint256 amount) returns (bool)",
-      "function mint(address to, uint256 amount) external" // Ensure mint function exists
-    ];
+    // Mint reward tokens to the owner
+    await rewardToken.mint(owner.address, ethers.utils.parseEther("1000000"));
+    await rewardToken.mint(admin.address, ethers.utils.parseEther("1000000"));
+    await rewardToken.mint(updater.address, ethers.utils.parseEther("1000000"));
+    await rewardToken.mint(user1.address, ethers.utils.parseEther("1000"));
+    await rewardToken.mint(user2.address, ethers.utils.parseEther("1000"));
+    await rewardToken.mint(user3.address, ethers.utils.parseEther("1000"));
 
-    rewardToken = new ethers.Contract(REWARD_TOKEN_ADDRESS, ERC20_ABI, owner);
-    lpToken = new ethers.Contract(LP_TOKEN_ADDRESS, ERC20_ABI, owner);
+    // Approve reward tokens to the BoopTheSnoot contract
+    await rewardToken.connect(owner).approve(boopTheSnoot.address, ethers.utils.parseEther("1000000"));
+    await rewardToken.connect(admin).approve(boopTheSnoot.address, ethers.utils.parseEther("1000000"));
+    await rewardToken.connect(updater).approve(boopTheSnoot.address, ethers.utils.parseEther("1000000"));
+    await rewardToken.connect(user1).approve(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+    await rewardToken.connect(user2).approve(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+    await rewardToken.connect(user3).approve(boopTheSnoot.address, ethers.utils.parseEther("1000"));
 
-    // Mint reward tokens to the owner if necessary
-    const mintAmount = ethers.utils.parseEther("1000");
-    const ownerRewardBalance = await rewardToken.balanceOf(owner.address);
-    if (ownerRewardBalance.lt(mintAmount)) {
-      await rewardToken.mint(owner.address, mintAmount.sub(ownerRewardBalance));
-      console.log("Minted reward tokens to the owner.");
-    }
+    // Assign additional roles if necessary
+    await boopTheSnoot.connect(owner).grantRole(await boopTheSnoot.ADMIN_ROLE(), admin.address);
+    await boopTheSnoot.connect(owner).grantRole(await boopTheSnoot.UPDATER_ROLE(), updater.address);
 
-    // Approve reward tokens to the MerkleRewardSystem contract
-    const approveTx = await rewardToken.approve(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-    await approveTx.wait();
-    console.log("Approved reward tokens to MerkleRewardSystem.");
+    // Whitelist the reward token and LP token
+    await boopTheSnoot.connect(admin).whitelistToken(rewardToken.address);
+    await boopTheSnoot.connect(admin).whitelistToken(lpToken.address);
 
-    // Whitelist the reward token
-    const isRewardTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(rewardToken.address);
-    if (!isRewardTokenWhitelisted) {
-      console.log("Whitelisting reward token...");
-      const whitelistRewardTokenTx = await merkleRewardSystem.whitelistToken(rewardToken.address);
-      await whitelistRewardTokenTx.wait();
-      console.log("Reward token whitelisted.");
-    } else {
-      console.log("Reward token already whitelisted.");
-    }
+    // Create a campaign
+    const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+    const startTimestamp = currentTimestamp + 60;
+    const endTimestamp = startTimestamp + 3600;
 
-    // Whitelist the LP token if necessary
-    const isLPTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(lpToken.address);
-    if (!isLPTokenWhitelisted) {
-      console.log("Whitelisting LP token...");
-      const whitelistLPTokenTx = await merkleRewardSystem.whitelistToken(lpToken.address);
-      await whitelistLPTokenTx.wait();
-      console.log("LP token whitelisted.");
-    } else {
-      console.log("LP token already whitelisted.");
-    }
+    await boopTheSnoot.connect(owner).createCampaign(
+      rewardToken.address,
+      lpToken.address,
+      ethers.utils.parseEther("1"),
+      startTimestamp,
+      endTimestamp,
+      ethers.utils.parseEther("1000")
+    );
 
-    // Check and log balances and allowances
-    const ownerBalance = await rewardToken.balanceOf(owner.address);
-    console.log("Owner reward token balance:", ethers.utils.formatEther(ownerBalance));
-
-    const allowance = await rewardToken.allowance(owner.address, merkleRewardSystem.address);
-    console.log("Reward token allowance:", ethers.utils.formatEther(allowance));
-  });
-
-  describe("Campaign Creation Edge Cases", function () {
-    it("Should fail to create a campaign with end time before start time", async function () {
-      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
-      const startTimestamp = currentTimestamp + 3600; // Starts in 1 hour
-      const endTimestamp = currentTimestamp + 60;     // Ends in 1 minute (before start time)
-
-      await expect(
-        merkleRewardSystem.connect(owner).createCampaign(
-          rewardToken.address,
-          lpToken.address,
-          ethers.utils.parseEther("1"),
-          startTimestamp,
-          endTimestamp,
-          ethers.utils.parseEther("1000")
-        )
-      ).to.be.revertedWith("InvalidCampaignDuration");
-    });
-
-    it("Should correctly assign IDs to multiple campaigns", async function () {
-      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
-
-      const campaignCount = 5;
-      for (let i = 0; i < campaignCount; i++) {
-        const startTimestamp = currentTimestamp + 60 + i * 100;
-        const endTimestamp = startTimestamp + 3600;
-
-        await merkleRewardSystem.connect(owner).createCampaign(
-          rewardToken.address,
-          lpToken.address,
-          ethers.utils.parseEther("1"),
-          startTimestamp,
-          endTimestamp,
-          ethers.utils.parseEther("100")
-        );
-
-        const campaign = await merkleRewardSystem.campaigns(i);
-        expect(campaign.creator).to.equal(owner.address);
-      }
-
-      // Ensure campaignCount is accessed correctly
-      const actualCampaignCount = await merkleRewardSystem.campaignCount();
-      expect(actualCampaignCount).to.equal(campaignCount);
-    });
-
-    // Additional edge case tests can be added here
+    // Transfer some LP tokens to user1 for referrals
+    await lpToken.mint(user1.address, ethers.utils.parseEther("100"));
+    await lpToken.connect(user1).approve(boopTheSnoot.address, ethers.utils.parseEther("100"));
   });
 
   describe("Merkle Root Updates", function () {
     it("Should allow the updater to update global Merkle root", async function () {
       const newRoot = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("new merkle root"));
 
-      await merkleRewardSystem.connect(updater).updateGlobalRoot(newRoot, (await ethers.provider.getBlock('latest')).timestamp);
+      await boopTheSnoot.connect(updater).updateGlobalRoot(newRoot);
 
-      const updatedRoot = await merkleRewardSystem.globalMerkleRoot();
+      const updatedRoot = await boopTheSnoot.globalMerkleRoot();
       expect(updatedRoot).to.equal(newRoot);
     });
 
     it("Should prevent non-updaters from updating Merkle roots", async function () {
-      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
-      const startTimestamp = currentTimestamp + 60;
-      const endTimestamp = startTimestamp + 3600;
-
-      await merkleRewardSystem.connect(owner).createCampaign(
-        rewardToken.address,
-        lpToken.address,
-        ethers.utils.parseEther("1"),
-        startTimestamp,
-        endTimestamp,
-        ethers.utils.parseEther("1000")
-      );
-
       const newRoot = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("new merkle root"));
 
       await expect(
-        merkleRewardSystem.connect(user1Wallet).updateGlobalRoot(newRoot, (await ethers.provider.getBlock('latest')).timestamp)
+        boopTheSnoot.connect(user1).updateGlobalRoot(newRoot)
       ).to.be.revertedWith("AccessControl:");
     });
-
-    // Additional tests for Merkle root updates
   });
 
-  describe("Complex Reward Claiming", function () {
-    it("Should allow claiming rewards from multiple campaigns", async function () {
-      // Create multiple campaigns
+  describe("Campaign Creation Edge Cases", function () {
+    it("Should fail to create a campaign with end time before start time", async function () {
       const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 3600; // Starts in 1 hour
+      const endTimestamp = startTimestamp - 60; // Ends 1 minute before start
 
-      for (let i = 0; i < 2; i++) {
-        const startTimestamp = currentTimestamp + 60;
-        const endTimestamp = startTimestamp + 3600;
-
-        await merkleRewardSystem.connect(owner).createCampaign(
+      await expect(
+        boopTheSnoot.connect(owner).createCampaign(
           rewardToken.address,
           lpToken.address,
           ethers.utils.parseEther("1"),
           startTimestamp,
           endTimestamp,
+          ethers.utils.parseEther("2000")
+        )
+      ).to.be.revertedWith("InvalidCampaignDuration()");
+    });
+
+    it("Should prevent creating a campaign with non-whitelisted tokens", async function () {
+      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 60;
+      const endTimestamp = startTimestamp + 3600;
+
+      const nonWhitelistedToken = await ethers.getContractFactory("MockERC20");
+      const fakeToken = await nonWhitelistedToken.deploy("Fake Token", "FAKE");
+      await fakeToken.deployed();
+
+      await expect(
+        boopTheSnoot.connect(owner).createCampaign(
+          fakeToken.address,
+          lpToken.address,
+          ethers.utils.parseEther("1"),
+          startTimestamp,
+          endTimestamp,
           ethers.utils.parseEther("1000")
-        );
-
-        // Fund the contract for each campaign
-        await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-      }
-
-      // Prepare cumulative amounts for multiple campaigns
-      const cumulativeAmounts = [ethers.utils.parseEther("100"), ethers.utils.parseEther("250")]; // Cumulative amounts
-      const campaignIds = [0, 1];
-
-      // Create leaves with cumulative amounts
-      const leaves = campaignIds.map((campaignId, index) =>
-        ethers.utils.solidityKeccak256(
-          ['uint256', 'address', 'uint256'],
-          [campaignId, user1Wallet.address, cumulativeAmounts[index]]
         )
-      );
-
-      // Generate Merkle tree and root
-      const merkleTree = new MerkleTree(leaves, keccak256, { sortPairs: true });
-      const root = merkleTree.getHexRoot();
-
-      // Update Merkle root
-      await merkleRewardSystem.connect(updater).updateGlobalRoot(root, (await ethers.provider.getBlock('latest')).timestamp);
-
-      // Fast forward time to campaign start
-      await network.provider.send("evm_increaseTime", [70]);
-      await network.provider.send("evm_mine");
-
-      // Get proofs
-      const proofs = leaves.map(leaf => merkleTree.getHexProof(leaf));
-
-      // Claim rewards with cumulative amounts
-      await merkleRewardSystem.connect(user1Wallet).claimRewards(
-        campaignIds,
-        cumulativeAmounts,
-        proofs
-      );
-
-      // Verify claimed amounts
-      for (let i = 0; i < campaignIds.length; i++) {
-        const claimedAmount = await merkleRewardSystem.userClaims(campaignIds[i], user1Wallet.address);
-        expect(claimedAmount).to.equal(cumulativeAmounts[i]);
-      }
+      ).to.be.revertedWith("InvalidRewardToken()");
     });
-
-    it("Should fail to claim with invalid proofs", async function () {
-      // Set up similar to previous test, but use incorrect proofs
-      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
-      const startTimestamp = currentTimestamp + 60;
-      const endTimestamp = startTimestamp + 3600;
-
-      await merkleRewardSystem.connect(owner).createCampaign(
-        rewardToken.address,
-        lpToken.address,
-        ethers.utils.parseEther("1"),
-        startTimestamp,
-        endTimestamp,
-        ethers.utils.parseEther("1000")
-      );
-
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-
-      const amount = ethers.utils.parseEther("100");
-      const campaignId = 0;
-
-      // Incorrect leaf
-      const incorrectLeaf = ethers.utils.solidityKeccak256(
-        ['uint256', 'address', 'uint256'],
-        [campaignId, user1Wallet.address, ethers.utils.parseEther("200")] // Wrong amount
-      );
-
-      const merkleTree = new MerkleTree([incorrectLeaf], keccak256, { sortPairs: true });
-      const root = merkleTree.getHexRoot();
-
-      // Update Merkle root
-      await merkleRewardSystem.connect(updater).updateGlobalRoot(root, (await ethers.provider.getBlock('latest')).timestamp);
-
-      // Fast forward time to campaign start
-      await network.provider.send("evm_increaseTime", [70]);
-      await network.provider.send("evm_mine");
-
-      // Correct leaf for user claim
-      const correctLeaf = ethers.utils.solidityKeccak256(
-        ['uint256', 'address', 'uint256'],
-        [campaignId, user1Wallet.address, amount]
-      );
-
-      const proof = merkleTree.getHexProof(correctLeaf);
-
-      // Attempt to claim
-      await expect(
-        merkleRewardSystem.connect(user1Wallet).claimRewards(
-          [campaignId],
-          [amount],
-          [proof]
-        )
-      ).to.be.revertedWith("InvalidProof");
-    });
-
-    it("Should fail to claim with invalid cumulative amount", async function () {
-      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
-      const startTimestamp = currentTimestamp + 60;
-      const endTimestamp = startTimestamp + 3600;
-
-      await merkleRewardSystem.connect(owner).createCampaign(
-        rewardToken.address,
-        lpToken.address,
-        ethers.utils.parseEther("1"),
-        startTimestamp,
-        endTimestamp,
-        ethers.utils.parseEther("1000")
-      );
-
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
-
-      const amount = ethers.utils.parseEther("100");
-      const campaignId = 0;
-
-      // Correct leaf for user claim
-      const leaf = ethers.utils.solidityKeccak256(
-        ['uint256', 'address', 'uint256'],
-        [campaignId, user1Wallet.address, amount]
-      );
-
-      const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
-      const root = merkleTree.getHexRoot();
-
-      // Update Merkle root
-      await merkleRewardSystem.connect(updater).updateGlobalRoot(root, (await ethers.provider.getBlock('latest')).timestamp);
-
-      // Fast forward time to campaign start
-      await network.provider.send("evm_increaseTime", [70]);
-      await network.provider.send("evm_mine");
-
-      const proof = merkleTree.getHexProof(leaf);
-
-      // Claim once
-      await merkleRewardSystem.connect(user1Wallet).claimRewards(
-        [campaignId],
-        [amount],
-        [proof]
-      );
-
-      // Attempt to claim with less than already claimed
-      await expect(
-        merkleRewardSystem.connect(user1Wallet).claimRewards(
-          [campaignId],
-          [ethers.utils.parseEther("50")], // Less than already claimed
-          [proof]
-        )
-      ).to.be.revertedWith("InvalidProof");
-    });
-
-    // Additional complex claiming scenarios
   });
 
   describe("Withdrawal Restrictions", function () {
@@ -346,7 +140,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -355,29 +149,30 @@ describe("MerkleRewardSystem Integration Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+      const campaignId = await boopTheSnoot.campaignCount();
+      const campaignIndex = campaignId.sub(1);
 
-      // Attempt to withdraw before campaign ends
-      await expect(
-        merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000"))
-      ).to.be.revertedWith("CooldownPeriodNotPassed");
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
 
-      // Fast forward time to campaign end
-      await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + 1]);
+      // Fast forward time to just after campaign end but before cooldown
+      const cooldownTime = await boopTheSnoot.ADMIN_WITHDRAW_COOLDOWN();
+      await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + cooldownTime.toNumber() - 10]);
       await network.provider.send("evm_mine");
 
-      // Attempt to withdraw before cooldown period
+      // Attempt to withdraw before cooldown
       await expect(
-        merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000"))
-      ).to.be.revertedWith("CooldownPeriodNotPassed");
+        boopTheSnoot.connect(admin).adminWithdrawUnclaimedRewards(campaignIndex)
+      ).to.be.revertedWith("CooldownPeriodNotPassed()");
     });
+  });
 
-    it("Should prevent withdrawing more than available rewards", async function () {
+  describe("Complex Reward Claiming", function () {
+    it("Should fail to claim with invalid proofs", async function () {
       const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -386,19 +181,324 @@ describe("MerkleRewardSystem Integration Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+      const campaignId = (await boopTheSnoot.campaignCount()).sub(1);
 
-      // Fast forward time to after cooldown period
-      const CREATOR_COOLDOWN_PERIOD = 30 * 24 * 60 * 60; // 30 days in seconds
-      await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + CREATOR_COOLDOWN_PERIOD + 10]);
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      const amount = ethers.utils.parseEther("100");
+      const leaf = ethers.utils.solidityKeccak256(
+        ['uint256', 'address', 'uint256', 'string'],
+        [campaignId, user1.address, amount, 'game']
+      );
+      const tree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+      const root = tree.getHexRoot();
+      const proof = tree.getHexProof(leaf);
+
+      await boopTheSnoot.connect(updater).updateGlobalRoot(root);
+
+      // Fast forward time to campaign start
+      await network.provider.send("evm_increaseTime", [70]);
       await network.provider.send("evm_mine");
 
-      // Attempt to withdraw more than balance
+      // Attempt to claim with invalid proof
+      const invalidProof = [];
+      const rewardClaim = {
+        campaignId: campaignId,
+        user: user1.address,
+        amount: amount,
+        rewardType: 0 // RewardType.Game
+      };
+
       await expect(
-        merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("2000"))
-      ).to.be.revertedWith("InsufficientBalance");
+        boopTheSnoot.connect(user1).claimRewards(
+          [rewardClaim],
+          [invalidProof]
+        )
+      ).to.be.revertedWithCustomError(boopTheSnoot, "InvalidProof");
     });
 
-    // Additional tests for withdrawal restrictions
+    it("Should fail to claim with invalid cumulative amount", async function () {
+      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 60;
+      const endTimestamp = startTimestamp + 3600;
+
+      await boopTheSnoot.connect(owner).createCampaign(
+        rewardToken.address,
+        lpToken.address,
+        ethers.utils.parseEther("1"),
+        startTimestamp,
+        endTimestamp,
+        ethers.utils.parseEther("1000")
+      );
+
+      const campaignId = (await boopTheSnoot.campaignCount()).sub(1);
+
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      const amount = ethers.utils.parseEther("100");
+      const leaf = ethers.utils.solidityKeccak256(
+        ['uint256', 'address', 'uint256', 'string'],
+        [campaignId, user1.address, amount, 'game']
+      );
+      const tree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+      const root = tree.getHexRoot();
+      const proof = tree.getHexProof(leaf);
+
+      await boopTheSnoot.connect(updater).updateGlobalRoot(root);
+
+      // Fast forward time to campaign start
+      await network.provider.send("evm_increaseTime", [70]);
+      await network.provider.send("evm_mine");
+
+      // Create a claim with an amount higher than what's in the Merkle tree
+      const invalidRewardClaim = {
+        campaignId: campaignId,
+        user: user1.address,
+        amount: amount.add(ethers.utils.parseEther("1")),
+        rewardType: 0 // RewardType.Game
+      };
+
+      await expect(
+        boopTheSnoot.connect(user1).claimRewards(
+          [invalidRewardClaim],
+          [proof]
+        )
+      ).to.be.revertedWith("InvalidCumulativeAmount");
+    });
+
+    it("Should allow successful reward claim with valid proof", async function () {
+      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 60;
+      const endTimestamp = startTimestamp + 3600;
+
+      await boopTheSnoot.connect(owner).createCampaign(
+        rewardToken.address,
+        lpToken.address,
+        ethers.utils.parseEther("1"),
+        startTimestamp,
+        endTimestamp,
+        ethers.utils.parseEther("1000")
+      );
+
+      const campaignId = (await boopTheSnoot.campaignCount()).sub(1);
+
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      const amount = ethers.utils.parseEther("100");
+      const leaf = ethers.utils.solidityKeccak256(
+        ['uint256', 'address', 'uint256', 'string'],
+        [campaignId, user1.address, amount, 'game']
+      );
+      const tree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+      const root = tree.getHexRoot();
+      const proof = tree.getHexProof(leaf);
+
+      await boopTheSnoot.connect(updater).updateGlobalRoot(root);
+
+      // Fast forward time to campaign start
+      await network.provider.send("evm_increaseTime", [70]);
+      await network.provider.send("evm_mine");
+
+      const rewardClaim = {
+        campaignId: campaignId,
+        user: user1.address,
+        amount: amount,
+        rewardType: 0 // RewardType.Game
+      };
+
+      const initialBalance = await rewardToken.balanceOf(user1.address);
+
+      await expect(
+        boopTheSnoot.connect(user1).claimRewards(
+          [rewardClaim],
+          [proof]
+        )
+      ).to.emit(boopTheSnoot, 'RewardsClaimed').withArgs(user1.address, campaignId, amount);
+
+      const finalBalance = await rewardToken.balanceOf(user1.address);
+      expect(finalBalance).to.equal(initialBalance.add(amount));
+    });
+  });
+
+  describe("Withdrawal Functions", function () {
+    it("Should allow admin to withdraw unclaimed rewards after cooldown", async function () {
+      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 60;
+      const endTimestamp = startTimestamp + 3600;
+
+      await boopTheSnoot.connect(owner).createCampaign(
+        rewardToken.address,
+        lpToken.address,
+        ethers.utils.parseEther("1"),
+        startTimestamp,
+        endTimestamp,
+        ethers.utils.parseEther("1000")
+      );
+
+      const campaignId = (await boopTheSnoot.campaignCount()).sub(1);
+
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      // Fast forward time to after campaign end and cooldown period
+      const cooldownTime = await boopTheSnoot.ADMIN_WITHDRAW_COOLDOWN();
+      await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + cooldownTime.toNumber() + 10]);
+      await network.provider.send("evm_mine");
+
+      await expect(
+        boopTheSnoot.connect(admin).adminWithdrawUnclaimedRewards(campaignId)
+      ).to.emit(boopTheSnoot, 'UnclaimedRewardsWithdrawn').withArgs(campaignId, ethers.utils.parseEther("1000"), admin.address);
+
+      const adminBalance = await rewardToken.balanceOf(admin.address);
+      expect(adminBalance).to.equal(ethers.utils.parseEther("1000000").add(ethers.utils.parseEther("1000")));
+    });
+
+    it("Should prevent admin from withdrawing twice", async function () {
+      const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
+      const startTimestamp = currentTimestamp + 60;
+      const endTimestamp = startTimestamp + 3600;
+
+      await boopTheSnoot.connect(owner).createCampaign(
+        rewardToken.address,
+        lpToken.address,
+        ethers.utils.parseEther("1"),
+        startTimestamp,
+        endTimestamp,
+        ethers.utils.parseEther("1000")
+      );
+
+      const campaignId = (await boopTheSnoot.campaignCount()).sub(1);
+
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      // Fast forward time to after campaign end and cooldown period
+      const cooldownTime = await boopTheSnoot.ADMIN_WITHDRAW_COOLDOWN();
+      await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + cooldownTime.toNumber() + 10]);
+      await network.provider.send("evm_mine");
+
+      // First withdrawal
+      await boopTheSnoot.connect(admin).adminWithdrawUnclaimedRewards(campaignId);
+
+      // Attempt second withdrawal
+      await expect(
+        boopTheSnoot.connect(admin).adminWithdrawUnclaimedRewards(campaignId)
+      ).to.be.revertedWith("AdminWithdrawalAlreadyDone()");
+    });
+  });
+
+  describe("Referral Program Integration", function () {
+    it("Should allow users to make referrals successfully", async function () {
+      const lpAmount = ethers.utils.parseEther("10");
+      await lpToken.mint(user1.address, lpAmount);
+      await lpToken.connect(user1).approve(boopTheSnoot.address, lpAmount);
+
+      await expect(
+        boopTheSnoot.connect(user1).makeReferral([user2.address], [lpAmount])
+      ).to.emit(boopTheSnoot, 'ReferralMade').withArgs(user1.address, user2.address, lpAmount);
+
+      expect(await boopTheSnoot.referrerOf(user2.address)).to.equal(user1.address);
+      const referees = await boopTheSnoot.referees(user1.address);
+      expect(referees.length).to.equal(1);
+      expect(referees[0]).to.equal(user2.address);
+    });
+
+    it("Should prevent self-referral", async function () {
+      await lpToken.mint(user1.address, ethers.utils.parseEther("10"));
+      await lpToken.connect(user1).approve(boopTheSnoot.address, ethers.utils.parseEther("10"));
+
+      await expect(
+        boopTheSnoot.connect(user1).makeReferral([user1.address], [ethers.utils.parseEther("10")])
+      ).to.be.revertedWith("SelfReferralNotAllowed");
+    });
+
+    it("Should prevent referring an already referred user", async function () {
+      await lpToken.mint(user1.address, ethers.utils.parseEther("20"));
+      await lpToken.connect(user1).approve(boopTheSnoot.address, ethers.utils.parseEther("20"));
+      await boopTheSnoot.connect(user1).makeReferral([user2.address], [ethers.utils.parseEther("10")]);
+
+      await expect(
+        boopTheSnoot.connect(user1).makeReferral([user2.address], [ethers.utils.parseEther("10")])
+      ).to.be.revertedWith("UserAlreadyReferred");
+    });
+
+    it("Should allow users to claim referral rewards with valid proof", async function () {
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      // User1 refers User2
+      await boopTheSnoot.connect(user1).makeReferral([user2.address], [ethers.utils.parseEther("10")]);
+
+      // Assume Off-Chain system processes ReferralMade events and allocates referral rewards
+      // For testing, we'll manually create a Merkle tree with User1's referral reward
+
+      const referralAmount = ethers.utils.parseEther("50");
+      const leaf = ethers.utils.solidityKeccak256(
+        ['address', 'uint256', 'string'],
+        [user1.address, referralAmount, 'referral']
+      );
+      const tree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+      const root = tree.getHexRoot();
+      const proof = tree.getHexProof(leaf);
+
+      // Update the global Merkle root
+      await boopTheSnoot.connect(updater).updateGlobalRoot(root);
+
+      // User1 claims referral reward
+      const rewardClaim = {
+        campaignId: 0, // 0 indicates referral reward
+        user: user1.address,
+        amount: referralAmount,
+        rewardType: 1 // RewardType.Referral
+      };
+
+      await expect(
+        boopTheSnoot.connect(user1).claimRewards(
+          [rewardClaim],
+          [proof]
+        )
+      ).to.emit(boopTheSnoot, 'RewardsClaimed').withArgs(user1.address, 0, referralAmount);
+
+      const userBalance = await rewardToken.balanceOf(user1.address);
+      expect(userBalance).to.equal(ethers.utils.parseEther("1000").add(referralAmount));
+    });
+
+    it("Should prevent users from claiming referral rewards more than once", async function () {
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
+
+      // User1 refers User2
+      await boopTheSnoot.connect(user1).makeReferral([user2.address], [ethers.utils.parseEther("10")]);
+
+      // Create Merkle tree for referral reward
+      const referralAmount = ethers.utils.parseEther("50");
+      const leaf = ethers.utils.solidityKeccak256(
+        ['address', 'uint256', 'string'],
+        [user1.address, referralAmount, 'referral']
+      );
+      const tree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+      const root = tree.getHexRoot();
+      const proof = tree.getHexProof(leaf);
+
+      // Update the global Merkle root
+      await boopTheSnoot.connect(updater).updateGlobalRoot(root);
+
+      // User1 claims referral reward
+      const rewardClaim = {
+        campaignId: 0, // 0 indicates referral reward
+        user: user1.address,
+        amount: referralAmount,
+        rewardType: 1 // RewardType.Referral
+      };
+
+      await boopTheSnoot.connect(user1).claimRewards(
+        [rewardClaim],
+        [proof]
+      );
+
+      // Attempt to claim again
+      await expect(
+        boopTheSnoot.connect(user1).claimRewards(
+          [rewardClaim],
+          [proof]
+        )
+      ).to.be.revertedWithCustomError(boopTheSnoot, "ExceedsEntitlement");
+    });
   });
 });

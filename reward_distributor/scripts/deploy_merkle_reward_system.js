@@ -5,10 +5,10 @@ async function main() {
   console.log("Deploying contracts with the account:", deployer.address);
 
   // Deploy MerkleRewardSystem
-  const MerkleRewardSystem = await hre.ethers.getContractFactory("MerkleRewardSystem");
-  const merkleRewardSystem = await MerkleRewardSystem.deploy();
-  await merkleRewardSystem.deployed();
-  console.log("MerkleRewardSystem deployed to:", merkleRewardSystem.address);
+  const BoopTheSnoot = await hre.ethers.getContractFactory("BoopTheSnoot");
+  const boopTheSnoot = await BoopTheSnoot.deploy();
+  await boopTheSnoot.deployed();
+  console.log("BoopTheSnoot deployed to:", boopTheSnoot.address);
 
   // Deploy RewardToken
   const MockERC20 = await hre.ethers.getContractFactory("MockERC20");

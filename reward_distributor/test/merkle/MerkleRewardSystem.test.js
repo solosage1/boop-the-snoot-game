@@ -4,14 +4,14 @@ const { ethers, network } = require("hardhat");
 const { MerkleTree } = require("merkletreejs");
 const keccak256 = require("keccak256");
 
-describe("MerkleRewardSystem Merkle Tests", function () {
-  let merkleRewardSystem, rewardToken, lpToken, owner, admin, updater;
+describe("BoopTheSnoot Merkle Tests", function () {
+  let boopTheSnoot, rewardToken, lpToken, owner, admin, updater;
   let user1Wallet, user2Wallet, user3Wallet;
 
   const ADMIN_COOLDOWN_PERIOD = 90 * 24 * 60 * 60; // 90 days
   const CREATOR_COOLDOWN_PERIOD = 30 * 24 * 60 * 60; // 30 days
 
-  async function deployMerkleRewardSystemFixture() {
+  async function deployBoopTheSnootFixture() {
     const [ownerSigner, adminSigner, updaterSigner] = await ethers.getSigners();
     owner = ownerSigner;
     admin = adminSigner;
@@ -24,12 +24,11 @@ describe("MerkleRewardSystem Merkle Tests", function () {
     lpToken = await MockERC20.deploy("LP Token", "LP");
     await lpToken.deployed();
 
-    const MerkleRewardSystem = await ethers.getContractFactory("MerkleRewardSystem");
-    merkleRewardSystem = await MerkleRewardSystem.deploy();
-    await merkleRewardSystem.deployed();
+    const BoopTheSnootFactory = await ethers.getContractFactory("BoopTheSnoot", owner);
+    boopTheSnoot = BoopTheSnootFactory.attach(DEPLOYED_CONTRACT_ADDRESS);
 
-    await merkleRewardSystem.grantRole(await merkleRewardSystem.ADMIN_ROLE(), admin.address);
-    await merkleRewardSystem.grantRole(await merkleRewardSystem.UPDATER_ROLE(), updater.address);
+    await boopTheSnoot.grantRole(await boopTheSnoot.ADMIN_ROLE(), admin.address);
+    await boopTheSnoot.grantRole(await boopTheSnoot.UPDATER_ROLE(), updater.address);
 
     user1Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
     user2Wallet = ethers.Wallet.createRandom().connect(ethers.provider);
@@ -43,15 +42,15 @@ describe("MerkleRewardSystem Merkle Tests", function () {
     await rewardToken.mint(owner.address, mintAmount);
     await lpToken.mint(owner.address, mintAmount);
 
-    await rewardToken.connect(owner).approve(merkleRewardSystem.address, mintAmount);
-    await lpToken.connect(owner).approve(merkleRewardSystem.address, mintAmount);
+    await rewardToken.connect(owner).approve(boopTheSnoot.address, mintAmount);
+    await lpToken.connect(owner).approve(boopTheSnoot.address, mintAmount);
 
-    await merkleRewardSystem.connect(admin).whitelistToken(rewardToken.address);
-    await merkleRewardSystem.connect(admin).whitelistToken(lpToken.address);
+    await boopTheSnoot.connect(admin).whitelistToken(rewardToken.address);
+    await boopTheSnoot.connect(admin).whitelistToken(lpToken.address);
   }
 
   beforeEach(async function () {
-    await loadFixture(deployMerkleRewardSystemFixture);
+    await loadFixture(deployBoopTheSnootFixture);
   });
 
   describe("Campaign Creation", function () {
@@ -60,7 +59,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -69,7 +68,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      const campaign = await merkleRewardSystem.campaigns(0);
+      const campaign = await boopTheSnoot.campaigns(0);
       expect(campaign.creator).to.equal(owner.address);
       expect(campaign.rewardToken).to.equal(rewardToken.address);
       expect(campaign.lpToken).to.equal(lpToken.address);
@@ -85,7 +84,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -94,7 +93,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
 
       await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + 1]);
       await network.provider.send("evm_mine");
@@ -102,8 +101,8 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       await network.provider.send("evm_increaseTime", [ADMIN_COOLDOWN_PERIOD]);
       await network.provider.send("evm_mine");
 
-      await expect(merkleRewardSystem.connect(admin).withdrawUnclaimedRewards(0))
-        .to.emit(merkleRewardSystem, "UnclaimedRewardsWithdrawn")
+      await expect(boopTheSnoot.connect(admin).withdrawUnclaimedRewards(0))
+        .to.emit(boopTheSnoot, "UnclaimedRewardsWithdrawn")
         .withArgs(0, ethers.utils.parseEther("1000"), admin.address);
     });
   });
@@ -114,7 +113,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -123,7 +122,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
 
       await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + 1]);
       await network.provider.send("evm_mine");
@@ -131,8 +130,8 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       await network.provider.send("evm_increaseTime", [CREATOR_COOLDOWN_PERIOD]);
       await network.provider.send("evm_mine");
 
-      await expect(merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000")))
-        .to.emit(merkleRewardSystem, "RewardTokensWithdrawn");
+      await expect(boopTheSnoot.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000")))
+        .to.emit(boopTheSnoot, "RewardTokensWithdrawn");
     });
   });
 
@@ -142,7 +141,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -151,7 +150,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
 
       await network.provider.send("evm_increaseTime", [60]);
       await network.provider.send("evm_mine");
@@ -168,19 +167,19 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       const root = merkleTree.getHexRoot();
       const proof = merkleTree.getHexProof(leaf);
 
-      await merkleRewardSystem.connect(updater).updateGlobalRoot(
+      await boopTheSnoot.connect(updater).updateGlobalRoot(
         root,
         (await ethers.provider.getBlock('latest')).timestamp
       );
 
-      await expect(merkleRewardSystem.connect(user1Wallet).claimRewards(
+      await expect(boopTheSnoot.connect(user1Wallet).claimRewards(
         [campaignId],
         [amount],
         [proof]
-      )).to.emit(merkleRewardSystem, "RewardsClaimed")
+      )).to.emit(boopTheSnoot, "RewardsClaimed")
         .withArgs(user1Wallet.address, amount);
 
-      const claimedAmount = await merkleRewardSystem.getUserClaimedAmount(campaignId, user1Wallet.address);
+      const claimedAmount = await boopTheSnoot.getUserClaimedAmount(campaignId, user1Wallet.address);
       expect(claimedAmount).to.equal(amount);
     });
   });
@@ -191,7 +190,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await merkleRewardSystem.connect(owner).createCampaign(
+      await boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),
@@ -200,7 +199,7 @@ describe("MerkleRewardSystem Merkle Tests", function () {
         ethers.utils.parseEther("1000")
       );
 
-      await rewardToken.connect(owner).transfer(merkleRewardSystem.address, ethers.utils.parseEther("1000"));
+      await rewardToken.connect(owner).transfer(boopTheSnoot.address, ethers.utils.parseEther("1000"));
 
       await network.provider.send("evm_increaseTime", [endTimestamp - currentTimestamp + 1]);
       await network.provider.send("evm_mine");
@@ -208,12 +207,12 @@ describe("MerkleRewardSystem Merkle Tests", function () {
       await network.provider.send("evm_increaseTime", [CREATOR_COOLDOWN_PERIOD]);
       await network.provider.send("evm_mine");
 
-      const contractBalanceBefore = await rewardToken.balanceOf(merkleRewardSystem.address);
+      const contractBalanceBefore = await rewardToken.balanceOf(boopTheSnoot.address);
 
-      await expect(merkleRewardSystem.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000")))
-        .to.emit(merkleRewardSystem, "RewardTokensWithdrawn");
+      await expect(boopTheSnoot.connect(owner).withdrawRewardTokens(0, ethers.utils.parseEther("1000")))
+        .to.emit(boopTheSnoot, "RewardTokensWithdrawn");
 
-      const contractBalanceAfter = await rewardToken.balanceOf(merkleRewardSystem.address);
+      const contractBalanceAfter = await rewardToken.balanceOf(boopTheSnoot.address);
 
       expect(contractBalanceBefore.sub(contractBalanceAfter)).to.equal(ethers.utils.parseEther("1000"));
     });
@@ -221,34 +220,34 @@ describe("MerkleRewardSystem Merkle Tests", function () {
 
   describe("Pausability", function () {
     it("Should allow admin to pause and unpause", async function () {
-      await merkleRewardSystem.connect(admin).pause();
-      expect(await merkleRewardSystem.paused()).to.be.true;
+      await boopTheSnoot.connect(admin).pause();
+      expect(await boopTheSnoot.paused()).to.be.true;
 
-      await merkleRewardSystem.connect(admin).unpause();
-      expect(await merkleRewardSystem.paused()).to.be.false;
+      await boopTheSnoot.connect(admin).unpause();
+      expect(await boopTheSnoot.paused()).to.be.false;
     });
 
     it("Should not allow non-admin to pause", async function () {
-      await expect(merkleRewardSystem.connect(user1Wallet).pause()).to.be.revertedWith(
-        `AccessControl: account ${user1Wallet.address.toLowerCase()} is missing role ${await merkleRewardSystem.ADMIN_ROLE()}`
+      await expect(boopTheSnoot.connect(user1Wallet).pause()).to.be.revertedWith(
+        `AccessControl: account ${user1Wallet.address.toLowerCase()} is missing role ${await boopTheSnoot.ADMIN_ROLE()}`
       );
     });
 
     it("Should not allow non-admin to unpause", async function () {
-      await merkleRewardSystem.connect(admin).pause();
-      await expect(merkleRewardSystem.connect(user1Wallet).unpause()).to.be.revertedWith(
-        `AccessControl: account ${user1Wallet.address.toLowerCase()} is missing role ${await merkleRewardSystem.ADMIN_ROLE()}`
+      await boopTheSnoot.connect(admin).pause();
+      await expect(boopTheSnoot.connect(user1Wallet).unpause()).to.be.revertedWith(
+        `AccessControl: account ${user1Wallet.address.toLowerCase()} is missing role ${await boopTheSnoot.ADMIN_ROLE()}`
       );
     });
 
     it("Should prevent actions when paused", async function () {
-      await merkleRewardSystem.connect(admin).pause();
+      await boopTheSnoot.connect(admin).pause();
 
       const currentTimestamp = (await ethers.provider.getBlock('latest')).timestamp;
       const startTimestamp = currentTimestamp + 60;
       const endTimestamp = startTimestamp + 3600;
 
-      await expect(merkleRewardSystem.connect(owner).createCampaign(
+      await expect(boopTheSnoot.connect(owner).createCampaign(
         rewardToken.address,
         lpToken.address,
         ethers.utils.parseEther("1"),

@@ -5,7 +5,7 @@ const { MerkleTree } = require('merkletreejs');
 const keccak256 = require('keccak256');
 
 describe("MerkleRewardSystem Integration Tests", function () {
-  let merkleRewardSystem;
+  let boopTheSnoot;
   let rewardToken;
   let lpToken;
   let owner;
@@ -23,8 +23,8 @@ describe("MerkleRewardSystem Integration Tests", function () {
     owner = ownerWallet;
 
     // Get contract instance
-    const MerkleRewardSystemFactory = await ethers.getContractFactory("MerkleRewardSystem", owner);
-    merkleRewardSystem = MerkleRewardSystemFactory.attach(DEPLOYED_CONTRACT_ADDRESS);
+    const BoopTheSnootFactory = await ethers.getContractFactory("BoopTheSnoot", owner);
+    boopTheSnoot = BoopTheSnootFactory.attach(DEPLOYED_CONTRACT_ADDRESS);
 
     // Define ERC20 ABI
     const ERC20_ABI = [
@@ -67,13 +67,13 @@ describe("MerkleRewardSystem Integration Tests", function () {
     console.log("LP test amount (10% of balance):", ethers.utils.formatEther(lpTestAmount));
 
     // Whitelist tokens
-    const ADMIN_ROLE = await merkleRewardSystem.ADMIN_ROLE();
+    const ADMIN_ROLE = await boopTheSnoot.ADMIN_ROLE();
 
-    const hasAdminRole = await merkleRewardSystem.hasRole(ADMIN_ROLE, owner.address);
+    const hasAdminRole = await boopTheSnoot.hasRole(ADMIN_ROLE, owner.address);
 
     if (!hasAdminRole) {
       console.log("Granting ADMIN_ROLE to the owner...");
-      const grantRoleTx = await merkleRewardSystem.grantRole(ADMIN_ROLE, owner.address);
+      const grantRoleTx = await boopTheSnoot.grantRole(ADMIN_ROLE, owner.address);
       await grantRoleTx.wait();
       console.log("ADMIN_ROLE granted to the owner.");
     } else {
@@ -81,9 +81,9 @@ describe("MerkleRewardSystem Integration Tests", function () {
     }
 
     // Whitelist Reward Token
-    const isRewardTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(rewardToken.address);
+    const isRewardTokenWhitelisted = await boopTheSnoot.whitelistedTokens(rewardToken.address);
     if (!isRewardTokenWhitelisted) {
-      const whitelistTx = await merkleRewardSystem.whitelistToken(rewardToken.address);
+      const whitelistTx = await boopTheSnoot.whitelistToken(rewardToken.address);
       await whitelistTx.wait();
       console.log("Whitelisted the reward token.");
     }
@@ -92,7 +92,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     // If your contract requires LP tokens to be whitelisted, implement similar logic
 
     // Verify token whitelisting
-    const isLPTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(lpToken.address);
+    const isLPTokenWhitelisted = await boopTheSnoot.whitelistedTokens(lpToken.address);
     console.log("Reward token whitelisted:", isRewardTokenWhitelisted);
     console.log("LP token whitelisted:", isLPTokenWhitelisted);
 
@@ -101,22 +101,22 @@ describe("MerkleRewardSystem Integration Tests", function () {
     console.log("Owner reward token balance:", ethers.utils.formatEther(ownerBalance));
 
     // Verify reward token allowance
-    const allowance = await rewardToken.allowance(owner.address, merkleRewardSystem.address);
+    const allowance = await rewardToken.allowance(owner.address, boopTheSnoot.address);
     console.log("Reward token allowance:", ethers.utils.formatEther(allowance));
 
     // Whitelist LP token if necessary
     if (!isLPTokenWhitelisted) {
       console.log("Whitelisting LP token...");
-      const whitelistLPTokenTx = await merkleRewardSystem.whitelistToken(lpToken.address);
+      const whitelistLPTokenTx = await boopTheSnoot.whitelistToken(lpToken.address);
       await whitelistLPTokenTx.wait();
       console.log("LP token whitelisted");
     }
 
     // Grant UPDATER_ROLE to the owner
-    const UPDATER_ROLE = await merkleRewardSystem.UPDATER_ROLE();
-    const hasUpdaterRole = await merkleRewardSystem.hasRole(UPDATER_ROLE, owner.address);
+    const UPDATER_ROLE = await boopTheSnoot.UPDATER_ROLE();
+    const hasUpdaterRole = await boopTheSnoot.hasRole(UPDATER_ROLE, owner.address);
     if (!hasUpdaterRole) {
-      const grantRoleTx = await merkleRewardSystem.grantRole(UPDATER_ROLE, owner.address);
+      const grantRoleTx = await boopTheSnoot.grantRole(UPDATER_ROLE, owner.address);
       await grantRoleTx.wait();
       console.log("Granted UPDATER_ROLE to the owner.");
     }
@@ -124,7 +124,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
   it("Should create a campaign and allow the owner to claim rewards", async function () {
     // Before creating the campaign
-    const isRewardTokenWhitelisted = await merkleRewardSystem.whitelistedTokens(rewardToken.address);
+    const isRewardTokenWhitelisted = await boopTheSnoot.whitelistedTokens(rewardToken.address);
     console.log("Is reward token whitelisted:", isRewardTokenWhitelisted);
 
     const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -141,16 +141,16 @@ describe("MerkleRewardSystem Integration Tests", function () {
       return;
     }
 
-    const allowance = await rewardToken.allowance(owner.address, merkleRewardSystem.address);
+    const allowance = await rewardToken.allowance(owner.address, boopTheSnoot.address);
     if (allowance.lt(totalRewardAmount)) {
-      const approveTx = await rewardToken.approve(merkleRewardSystem.address, totalRewardAmount);
+      const approveTx = await rewardToken.approve(boopTheSnoot.address, totalRewardAmount);
       await approveTx.wait();
       console.log("Approved reward tokens for the contract.");
     }
 
     // Create campaign with error handling
     try {
-      const createTx = await merkleRewardSystem.createCampaign(
+      const createTx = await boopTheSnoot.createCampaign(
         rewardToken.address,
         lpToken.address,
         maxRewardRate,
@@ -167,7 +167,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     }
 
     // Get campaign ID
-    const campaignCount = await merkleRewardSystem.campaignCount();
+    const campaignCount = await boopTheSnoot.campaignCount();
     const campaignId = campaignCount.sub(1);
     console.log("Created campaign ID:", campaignId.toString());
 
@@ -187,7 +187,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     const proof = merkleTree.getHexProof(leafNodes[0]);
 
     // Update the global Merkle root
-    const lastUpdateTimestamp = await merkleRewardSystem.lastUpdateTimestamp();
+    const lastUpdateTimestamp = await boopTheSnoot.lastUpdateTimestamp();
     const updateTimestamp = Math.floor(Date.now() / 1000);
 
     if (updateTimestamp <= lastUpdateTimestamp) {
@@ -195,7 +195,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
       return;
     }
 
-    const updateRootTx = await merkleRewardSystem.updateGlobalRoot(root, updateTimestamp);
+    const updateRootTx = await boopTheSnoot.updateGlobalRoot(root, updateTimestamp);
     await updateRootTx.wait();
     console.log("Updated global Merkle root.");
 
@@ -210,7 +210,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
     // Claim rewards
     try {
-      const claimTx = await merkleRewardSystem.claimRewards(
+      const claimTx = await boopTheSnoot.claimRewards(
         [campaignId],
         [claimAmount],
         [proof]
@@ -223,7 +223,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     }
 
     // Verify claimed amount
-    const claimedAmount = await merkleRewardSystem.getUserClaimedAmount(campaignId, userAddress);
+    const claimedAmount = await boopTheSnoot.getUserClaimedAmount(campaignId, userAddress);
     expect(claimedAmount).to.equal(claimAmount);
     console.log("Claimed amount verified.");
   });
@@ -238,12 +238,12 @@ describe("MerkleRewardSystem Integration Tests", function () {
     const maxRewardRate = ethers.utils.parseEther("1");
 
     // Approve reward tokens to the contract
-    const approveTx = await rewardToken.approve(merkleRewardSystem.address, totalRewardAmount);
+    const approveTx = await rewardToken.approve(boopTheSnoot.address, totalRewardAmount);
     await approveTx.wait();
     console.log("Approved reward tokens for the new campaign.");
 
     // Create campaign
-    const createTx = await merkleRewardSystem.createCampaign(
+    const createTx = await boopTheSnoot.createCampaign(
       rewardToken.address,
       lpToken.address,
       maxRewardRate,
@@ -256,7 +256,7 @@ describe("MerkleRewardSystem Integration Tests", function () {
     console.log("New campaign created.");
 
     // Get campaign ID
-    const campaignCount = await merkleRewardSystem.campaignCount();
+    const campaignCount = await boopTheSnoot.campaignCount();
     const campaignId = campaignCount.sub(1);
     console.log("New campaign ID:", campaignId.toString());
 
@@ -277,29 +277,20 @@ describe("MerkleRewardSystem Integration Tests", function () {
 
     // Update the global Merkle root
     const root = merkleTree.getHexRoot();
-    await merkleRewardSystem.updateGlobalRoot(root, startTimestamp - 10);
+    await boopTheSnoot.updateGlobalRoot(root, startTimestamp - 10);
 
     // Wait for the campaign to start
-    const delay = startTimestamp - Math.floor(Date.now() / 1000) + 1;
-    if (delay > 0) {
-      console.log(`Waiting ${delay} seconds for the campaign to start...`);
-      await new Promise(resolve => setTimeout(resolve, delay * 1000));
-    }
+    await new Promise(resolve => setTimeout(resolve, (startTimestamp - Math.floor(Date.now() / 1000) + 1) * 1000));
 
     // Attempt to claim with invalid proof
-    try {
-      await merkleRewardSystem.claimRewards(
+    await expect(
+      boopTheSnoot.claimRewards(
         [campaignId],
         [invalidClaimAmount],
         [invalidProof],
         { gasLimit: 500000 }
-      );
-      // If no error is thrown, the test should fail
-      expect.fail("Expected transaction to fail, but it succeeded.");
-    } catch (error) {
-      console.log("Transaction failed as expected:", error.message);
-      // Optionally, you can add assertions to check the error message or code
-      expect(error.message).to.include("CALL_EXCEPTION");
-    }
+      )
+    ).to.be.revertedWithCustomError(boopTheSnoot, "InvalidProof");
+    console.log("Rejected invalid proof claim as expected.");
   });
 });
